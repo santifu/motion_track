@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Contour-like Tracking with P5.js and ml5.js</title>
+    <title>OpenCV.js Contour Tracking with Gaussian Accumulation</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="https://unpkg.com/ml5@0.6.1/dist/ml5.min.js"></script>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -68,30 +70,33 @@
     </style>
 </head>
 <body>
-    <h1>Contour-like Tracking with Gaussian Accumulation</h1>
+    <h1>OpenCV.js Contour Tracking with Gaussian Accumulation</h1>
     <div id="p5-canvas-container"></div>
     <div id="controls">
         <div class="control-group">
-            <label for="kernelSizeSlider">Gaussian Kernel Size (pixels):</label>
-            <input type="range" id="kernelSizeSlider" min="5" max="51" value="15" step="2">
-            <span id="kernelSizeValue">15</span>
+            <label for="threshSlider">Threshold Value (for binarization):</label>
+            <input type="range" id="threshSlider" min="0" max="255" value="100" step="1">
+            <span id="threshValue">100</span>
         </div>
         <div class="control-group">
-            <label for="sigmaSlider">Gaussian Sigma (blur amount):</label>
-            <input type="range" id="sigmaSlider" min="0.5" max="10" value="4" step="0.5">
-            <span id="sigmaValue">4</span>
+            <label for="minContourAreaSlider">Minimum Contour Area:</label>
+            <input type="range" id="minContourAreaSlider" min="0" max="2000" value="200" step="10">
+            <span id="minContourAreaValue">200</span>
+        </div>
+        <div class="control-group">
+            <label for="gaussianKernelSizeSlider">Gaussian Kernel Size (pixels):</label>
+            <input type="range" id="gaussianKernelSizeSlider" min="5" max="51" value="15" step="2">
+            <span id="gaussianKernelSizeValue">15</span>
+        </div>
+        <div class="control-group">
+            <label for="gaussianSigmaSlider">Gaussian Sigma (blur amount):</label>
+            <input type="range" id="gaussianSigmaSlider" min="0.5" max="10" value="4" step="0.5">
+            <span id="gaussianSigmaValue">4</span>
         </div>
         <div class="control-group">
             <label for="overlayAlphaSlider">Accumulation Overlay Opacity:</label>
             <input type="range" id="overlayAlphaSlider" min="0" max="100" value="30" step="1">
             <span id="overlayAlphaValue">30%</span>
-        </div>
-
-        <div class="control-group">
-            <p>Select objects to track (based on bounding box center):</p>
-            <div id="checkboxes-container" class="checkbox-container">
-                <p>Loading model and awaiting detections...</p>
-            </div>
         </div>
 
         <div class="control-group">
@@ -101,28 +106,62 @@
     </div>
 
     <script>
-        let objectDetector;
         let video;
-        let detections = [];
         let accumulatorLayer; // This will act like your Python 'accumulator'
-        let kernelSizeSliderHTML;
-        let kernelSizeValueSpan;
-        let sigmaSliderHTML;
-        let sigmaValueSpan;
+        let streaming = false; // Flag to indicate if video stream is active
+        let opencvReady = false; // Flag to indicate if OpenCV.js is loaded
+
+        // OpenCV.js Mats (Matrices) for image processing
+        let srcMat;
+        let grayMat;
+        let blurredMat;
+        let threshMat;
+        let contours;
+        let hierarchy;
+
+        // HTML elements references
+        let threshSliderHTML;
+        let threshValueSpan;
+        let minContourAreaSliderHTML;
+        let minContourAreaValueSpan;
+        let gaussianKernelSizeSliderHTML;
+        let gaussianKernelSizeValueSpan;
+        let gaussianSigmaSliderHTML;
+        let gaussianSigmaValueSpan;
         let overlayAlphaSliderHTML;
         let overlayAlphaValueSpan;
 
-        let selectedLabels = {};
-        let labelCheckboxes = {};
-        let checkboxesContainer;
+        // Gaussian Kernel for accumulation
+        let gaussianAccumulationKernel = [];
+        let currentGaussianKernelSize = 15;
+        let currentGaussianSigma = 4;
+
+        // --- OpenCV.js ready callback ---
+        function onOpenCvReady() {
+            console.log('OpenCV.js is ready.');
+            opencvReady = true;
+            // Initialize OpenCV.js Mats after it's ready
+            srcMat = new cv.Mat(480, 640, cv.CV_8UC4); // RGBA input
+            grayMat = new cv.Mat(480, 640, cv.CV_8UC1); // Grayscale
+            blurredMat = new cv.Mat(480, 640, cv.CV_8UC1); // Blurred grayscale
+            threshMat = new cv.Mat(480, 640, cv.CV_8UC1); // Binary thresholded
+            contours = new cv.MatVector();
+            hierarchy = new cv.Mat();
+
+            // Only call setup and start drawing if P5.js is also ready (which it usually is by this point)
+            if (typeof setup === 'function') {
+                // If P5.js setup hasn't run yet, it will now.
+                // If it has, no problem, just make sure loop() can start.
+                if (!streaming) { // Only if video hasn't started
+                    startCaptureAndProcessing();
+                }
+            } else {
+                 console.error("P5.js setup not found. Make sure p5.js loads correctly.");
+            }
+        }
 
         // --- Gaussian Kernel Functions (Adapted from Python to P5.js Canvas) ---
-        // This kernel is applied to the accumulatorLayer using image data manipulation.
-        let gaussianKernelData = []; // To store the 1D or 2D kernel values
-        let currentKernelSize = 15;
-        let currentSigma = 4;
-
-        function generateGaussianKernel(size, sigma) {
+        function generateGaussianAccumulationKernel(size, sigma) {
             let kernel = [];
             let sum = 0;
             let half = (size - 1) / 2;
@@ -152,7 +191,6 @@
             let k_size = kernel.length;
             let half = Math.floor(k_size / 2);
 
-            // Get the pixels of the layer to manipulate directly
             layer.loadPixels();
 
             for (let ky = 0; ky < k_size; ky++) {
@@ -160,22 +198,16 @@
                     let pixelX = center_x + (kx - half);
                     let pixelY = center_y + (ky - half);
 
-                    // Check bounds
                     if (pixelX >= 0 && pixelX < layer.width && pixelY >= 0 && pixelY < layer.height) {
                         let index = (pixelX + pixelY * layer.width) * 4; // RGBA
 
-                        // Add kernel value to the red channel (or any channel, we'll display it as grayscale)
-                        // Scale the kernel value to a visible range (e.g., 0-255).
-                        // You might need to adjust this scaling depending on how "bright" you want the points.
-                        // We'll let the normalization handle overall brightness later.
-                        let currentRed = layer.pixels[index];
-                        let newValue = currentRed + (kernel[ky][kx] * 50); // Multiply by a factor for visibility
+                        let currentVal = layer.pixels[index]; // Use red channel for accumulation
+                        let newValue = currentVal + (kernel[ky][kx] * 100); // Scale by factor
 
-                        layer.pixels[index] = Math.min(255, newValue); // Cap at 255
-                        // Keep other channels and alpha for now, or set them to match red for grayscale
-                        layer.pixels[index + 1] = layer.pixels[index]; // Green
-                        layer.pixels[index + 2] = layer.pixels[index]; // Blue
-                        layer.pixels[index + 3] = 255; // Alpha (fully opaque dot parts)
+                        layer.pixels[index] = Math.min(255, newValue);
+                        layer.pixels[index + 1] = Math.min(255, newValue);
+                        layer.pixels[index + 2] = Math.min(255, newValue);
+                        layer.pixels[index + 3] = 255; // Keep opaque during accumulation
                     }
                 }
             }
@@ -195,39 +227,46 @@
             accumulatorLayer.background(0); // Start with black background (represents 0 accumulation)
 
             // Get references to HTML elements
-            kernelSizeSliderHTML = document.getElementById('kernelSizeSlider');
-            kernelSizeValueSpan = document.getElementById('kernelSizeValue');
-            sigmaSliderHTML = document.getElementById('sigmaSlider');
-            sigmaValueSpan = document.getElementById('sigmaValue');
+            threshSliderHTML = document.getElementById('threshSlider');
+            threshValueSpan = document.getElementById('threshValue');
+            minContourAreaSliderHTML = document.getElementById('minContourAreaSlider');
+            minContourAreaValueSpan = document.getElementById('minContourAreaValue');
+            gaussianKernelSizeSliderHTML = document.getElementById('gaussianKernelSizeSlider');
+            gaussianKernelSizeValueSpan = document.getElementById('gaussianKernelSizeValue');
+            gaussianSigmaSliderHTML = document.getElementById('gaussianSigmaSlider');
+            gaussianSigmaValueSpan = document.getElementById('gaussianSigmaValue');
             overlayAlphaSliderHTML = document.getElementById('overlayAlphaSlider');
             overlayAlphaValueSpan = document.getElementById('overlayAlphaValue');
-            checkboxesContainer = document.getElementById('checkboxes-container');
 
-            // Initialize kernel and update spans
-            currentKernelSize = parseInt(kernelSizeSliderHTML.value);
-            currentSigma = parseFloat(sigmaSliderHTML.value);
-            gaussianKernelData = generateGaussianKernel(currentKernelSize, currentSigma);
-            kernelSizeValueSpan.innerText = currentKernelSize;
-            sigmaValueSpan.innerText = currentSigma;
+            // Initialize Gaussian accumulation kernel
+            currentGaussianKernelSize = parseInt(gaussianKernelSizeSliderHTML.value);
+            currentGaussianSigma = parseFloat(gaussianSigmaSliderHTML.value);
+            gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
+
+            // Update span values based on initial slider values
+            threshValueSpan.innerText = threshSliderHTML.value;
+            minContourAreaValueSpan.innerText = minContourAreaSliderHTML.value;
+            gaussianKernelSizeValueSpan.innerText = gaussianKernelSizeSliderHTML.value;
+            gaussianSigmaValueSpan.innerText = gaussianSigmaSliderHTML.value;
             overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%';
 
-            // Update kernel parameters when sliders move
-            kernelSizeSliderHTML.addEventListener('input', () => {
-                currentKernelSize = parseInt(kernelSizeSliderHTML.value);
-                // Ensure kernel size is odd for proper centering
-                if (currentKernelSize % 2 === 0) currentKernelSize += 1;
-                kernelSizeSliderHTML.value = currentKernelSize; // Update slider if adjusted
-                kernelSizeValueSpan.innerText = currentKernelSize;
-                gaussianKernelData = generateGaussianKernel(currentKernelSize, currentSigma);
+            // Add event listeners for sliders
+            threshSliderHTML.addEventListener('input', () => threshValueSpan.innerText = threshSliderHTML.value);
+            minContourAreaSliderHTML.addEventListener('input', () => minContourAreaValueSpan.innerText = minContourAreaSliderHTML.value);
+            gaussianKernelSizeSliderHTML.addEventListener('input', () => {
+                currentGaussianKernelSize = parseInt(gaussianKernelSizeSliderHTML.value);
+                if (currentGaussianKernelSize % 2 === 0) currentGaussianKernelSize += 1;
+                gaussianKernelSizeSliderHTML.value = currentGaussianKernelSize;
+                gaussianKernelSizeValueSpan.innerText = currentGaussianKernelSize;
+                gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
             });
-            sigmaSliderHTML.addEventListener('input', () => {
-                currentSigma = parseFloat(sigmaSliderHTML.value);
-                sigmaValueSpan.innerText = currentSigma;
-                gaussianKernelData = generateGaussianKernel(currentKernelSize, currentSigma);
+            gaussianSigmaSliderHTML.addEventListener('input', () => {
+                currentGaussianSigma = parseFloat(gaussianSigmaSliderHTML.value);
+                gaussianSigmaValueSpan.innerText = currentGaussianSigma;
+                gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
             });
-            overlayAlphaSliderHTML.addEventListener('input', () => {
-                overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%';
-            });
+            overlayAlphaSliderHTML.addEventListener('input', () => overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%');
+
 
             // Set up button listeners
             document.getElementById('saveAccumulationBtn').addEventListener('click', () => {
@@ -238,135 +277,109 @@
                 console.log('Accumulated pattern cleared.');
             });
 
-            // Load the model
-            objectDetector = ml5.objectDetector('cocossd', modelReady);
+            // Start capture and processing only if OpenCV is ready
+            // The onOpenCvReady() function will call this if opencv.js loads AFTER p5.js
+            // If p5.js setup runs first, we wait for onOpenCvReady.
+            if (opencvReady && !streaming) {
+                 startCaptureAndProcessing();
+            }
         }
 
-        function modelReady() {
-            console.log('Model loaded.');
-            checkboxesContainer.innerHTML = ''; // Clear initial loading message
+        // This function starts the continuous video processing loop
+        function startCaptureAndProcessing() {
+            streaming = true;
             video.elt.addEventListener('loadeddata', () => {
-                console.log('Video ready. Starting detection...');
-                detectObjects();
+                console.log('Video ready. Starting OpenCV.js processing...');
+                requestAnimationFrame(processVideoFrame); // Start the loop
             });
         }
 
-        function detectObjects() {
-            objectDetector.detect(video, gotResults);
-        }
 
-        function gotResults(error, results) {
-            if (error) {
-                console.error(error);
+        // Main loop for video processing and drawing
+        function processVideoFrame() {
+            if (!streaming || !opencvReady) {
+                requestAnimationFrame(processVideoFrame); // Keep trying if not ready
                 return;
             }
-            detections = results;
-            updateLabelCheckboxes(detections);
-            detectObjects(); // loop
-        }
 
-        function updateLabelCheckboxes(currentDetections) {
-            for (let i = 0; i < currentDetections.length; i++) {
-                let obj = currentDetections[i];
-                if (!(obj.label in labelCheckboxes)) {
-                    addLabelCheckbox(obj.label);
+            // Get the current frame from the P5.js video element
+            // You can draw the video to a temporary p5.Graphics or directly read its pixels.
+            // For OpenCV.js, it's often easiest to draw it to a temporary canvas,
+            // then get its imageData.
+            // Create a temporary canvas context to get image data
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = video.width;
+            tempCanvas.height = video.height;
+            let tempCtx = tempCanvas.getContext('2d');
+
+            // Draw the flipped video to the temporary canvas
+            tempCtx.save();
+            tempCtx.translate(video.width, 0);
+            tempCtx.scale(-1, 1);
+            tempCtx.drawImage(video.elt, 0, 0, video.width, video.height);
+            tempCtx.restore();
+
+            let imageData = tempCtx.getImageData(0, 0, video.width, video.height);
+            srcMat = cv.matFromImageData(imageData); // Convert imageData to OpenCV Mat
+
+            // --- OpenCV.js Processing (mimicking your Python script) ---
+
+            // 1. Convert to Grayscale
+            cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY);
+
+            // 2. Blur
+            let ksize = new cv.Size(7, 7); // Fixed blur kernel size
+            cv.GaussianBlur(grayMat, blurredMat, ksize, 0, 0, cv.BORDER_DEFAULT);
+
+            // 3. Threshold (Binarize)
+            let threshValue = parseInt(threshSliderHTML.value);
+            cv.threshold(blurredMat, threshMat, threshValue, 255, cv.THRESH_BINARY_INV);
+
+            // 4. Find Contours
+            contours.clear(); // Clear previous contours
+            hierarchy.delete(); // Delete previous hierarchy
+            cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            // --- Drawing on P5.js Canvas ---
+            // Draw the main video frame (already flipped via tempCtx)
+            image(video, 0, 0, width, height);
+
+            let minContourArea = parseInt(minContourAreaSliderHTML.value);
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+
+                if (area > minContourArea) {
+                    // Calculate Moments and Centroid
+                    let M = cv.moments(cnt, false);
+                    if (M.m00 !== 0) {
+                        let cx = M.m10 / M.m00;
+                        let cy = M.m01 / M.m00;
+
+                        // Draw contour (P5.js equivalent of cv2.drawContours)
+                        // This requires converting OpenCV Mat to p5.Image or drawing point by point.
+                        // For simplicity, let's draw bounding box for now, or just a circle.
+                        // To draw actual contours, we'd need to convert contours to p5.Vector arrays.
+                        let rect = cv.boundingRect(cnt);
+                        stroke(0, 255, 0); // Green bounding box
+                        strokeWeight(2);
+                        noFill();
+                        rect(rect.x, rect.y, rect.width, rect.height); // Draw bounding box
+
+                        // Draw current centroid in red
+                        fill(255, 0, 0); // Red
+                        noStroke();
+                        ellipse(cx, cy, 8, 8);
+
+                        // Add Gaussian point to accumulatorLayer
+                        addGaussianPointToLayer(accumulatorLayer, gaussianAccumulationKernel, cx, cy);
+                    }
                 }
-            }
-        }
-
-        function addLabelCheckbox(label) {
-            let labelDiv = document.createElement('label');
-            let checkboxInput = document.createElement('input');
-            checkboxInput.type = 'checkbox';
-            checkboxInput.value = label;
-            checkboxInput.id = 'checkbox-' + label.replace(/\s+/g, '-');
-
-            let spanText = document.createElement('span');
-            spanText.innerText = label;
-
-            labelDiv.appendChild(checkboxInput);
-            labelDiv.appendChild(spanText);
-            checkboxesContainer.appendChild(labelDiv);
-
-            labelCheckboxes[label] = checkboxInput;
-            selectedLabels[label] = false;
-
-            checkboxInput.addEventListener('change', (event) => {
-                selectedLabels[label] = event.target.checked;
-                console.log(selectedLabels);
-            });
-        }
-
-        function draw() {
-            // Apply flip transformation for the live video
-            push();
-            translate(width, 0);
-            scale(-1, 1);
-            image(video, 0, 0);
-            pop();
-
-            // Draw bounding boxes and labels for all detected objects on the main canvas
-            for (let i = 0; i < detections.length; i++) {
-                let obj = detections[i];
-                let cx = obj.x + obj.width / 2;
-                let cy = obj.y + obj.height / 2;
-
-                // Adjust coordinates for the flipped video view for drawing overlays
-                let displayCx = width - cx;
-
-                stroke(0, 255, 0); // Green bounding box
-                strokeWeight(2);
-                noFill();
-                // Draw rect using original (unflipped) coordinates from ml5, which P5.js's
-                // coordinate system is based on for drawing unless transformed.
-                // Since we already flipped the *video image*, drawing on top in normal coords is tricky.
-                // Instead, we will draw the bounding box *before* flipping, then flip everything.
-                // OR, draw the bounding box on the main canvas using transformed coordinates.
-                // For simplicity, let's draw them after the flip, using adjusted coords if needed.
-                // The bounding box coordinates from ml5 are relative to the *unflipped* video frame.
-                // So if we draw on the main canvas (which is not flipped by default for this drawing call),
-                // we'd need to manually flip the X-coordinate for display.
-                // To avoid complex math for bounding box display, we usually flip the entire canvas, draw, then unflip.
-                // However, our current `push`/`pop` only flips the video image.
-                // Let's re-think drawing the bounding box: The bounding box `obj.x` etc. refers to the *input* video.
-                // If the video is displayed flipped, then the *visual* position of the box also flips.
-                // So, `obj.x` would correspond to `width - obj.x - obj.width` in the flipped view.
-                // Let's apply transformations to draw boxes correctly on the flipped video.
-
-                // Push and pop again specifically for the bounding box and label drawing
-                push();
-                translate(width, 0); // Move origin to right
-                scale(-1, 1);       // Flip horizontally
-
-                // Now, draw bounding box and text using original obj.x, obj.y as they refer to the flipped content
-                // because the canvas transform is active.
-                stroke(0, 255, 0); // Green bounding box
-                strokeWeight(2);
-                noFill();
-                rect(obj.x, obj.y, obj.width, obj.height);
-
-                noStroke();
-                fill(255); // White text
-                textSize(16);
-                text(obj.label + ' ' + nfc(obj.confidence * 100, 2) + '%', obj.x + 5, obj.y + 15);
-
-                pop(); // Restore main canvas drawing state
-
-                // Add Gaussian point to accumulatorLayer only for selected objects
-                if (selectedLabels[obj.label]) {
-                    // Coordinates for adding to the accumulator layer should be consistent
-                    // with how the *video is displayed*. Since we are displaying it flipped,
-                    // the accumulator layer should also accumulate points based on the flipped view.
-                    addGaussianPointToLayer(accumulatorLayer, gaussianKernelData, displayCx, cy);
-                    // Draw a small red circle for the current centroid on the main canvas for immediate feedback
-                    fill(255, 0, 0);
-                    noStroke();
-                    ellipse(displayCx, cy, 8, 8);
-                }
+                cnt.delete(); // Release contour Mat memory
             }
 
-            // Normalize the accumulator layer's pixels for visualization
-            // This normalizes the red channel (which holds our accumulation) to a grayscale image.
+            // --- Normalize and Overlay Accumulator Layer ---
             accumulatorLayer.loadPixels();
             let maxAccumulation = 0;
             for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
@@ -376,32 +389,48 @@
             }
 
             if (maxAccumulation > 0) {
+                let overlayAlpha = parseFloat(overlayAlphaSliderHTML.value) / 100; // 0.0 to 1.0
                 for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
                     let normalizedVal = map(accumulatorLayer.pixels[i], 0, maxAccumulation, 0, 255);
-                    accumulatorLayer.pixels[i] = normalizedVal; // Red
-                    accumulatorLayer.pixels[i+1] = normalizedVal; // Green
-                    accumulatorLayer.pixels[i+2] = normalizedVal; // Blue
-                    // Use alpha for the accumulated pattern's overall visibility
-                    accumulatorLayer.pixels[i+3] = map(normalizedVal, 0, 255, 0, 255 * (parseFloat(overlayAlphaSliderHTML.value) / 100)); // Apply slider alpha
+                    accumulatorLayer.pixels[i] = normalizedVal;     // Red
+                    accumulatorLayer.pixels[i+1] = normalizedVal;   // Green
+                    accumulatorLayer.pixels[i+2] = normalizedVal;   // Blue
+                    accumulatorLayer.pixels[i+3] = 255 * overlayAlpha; // Apply transparency
                 }
             }
             accumulatorLayer.updatePixels();
+            image(accumulatorLayer, 0, 0); // Overlay the accumulated pattern
 
+            // Release OpenCV.js Mats that are no longer needed for this frame
+            srcMat.release(); // Important to release memory
+            // grayMat.release(); // These are reused, no need to release here
+            // blurredMat.release();
+            // threshMat.release();
+            // contours.delete(); // Contours are cleared and re-populated each frame
+            // hierarchy.delete(); // Hierarchy is deleted and re-populated each frame
 
-            // Overlay the normalized accumulator layer on the main canvas
-            // Use blendMode(ADD) for a heat-map like effect, or blendMode(BLEND) for simple overlay
-            // blendMode(ADD); // This can make it glow
-            image(accumulatorLayer, 0, 0);
-            // blendMode(BLEND); // Reset blend mode for other drawings if ADD was used
+            // Request next frame
+            requestAnimationFrame(processVideoFrame);
         }
 
-        // Optional: Keep keyPressed for alternative input, though buttons are primary
+        // --- Cleanup on window close or reload ---
+        window.onbeforeunload = function() {
+            if (srcMat) srcMat.delete();
+            if (grayMat) grayMat.delete();
+            if (blurredMat) blurredMat.delete();
+            if (threshMat) threshMat.delete();
+            if (contours) contours.delete();
+            if (hierarchy) hierarchy.delete();
+            console.log("OpenCV.js memory released.");
+        };
+
+        // Optional: Keep keyPressed for alternative input
         function keyPressed() {
-            if (key === 's' || key === 'S') { // Changed from 't' to 's' for consistency with "Save"
+            if (key === 's' || key === 'S') {
                 accumulatorLayer.save('gaussian_accumulation_pattern.png');
             }
             if (key === 'c' || key === 'C') {
-                accumulatorLayer.background(0); // Reset accumulator layer to black
+                accumulatorLayer.background(0);
                 console.log('Accumulated pattern cleared.');
             }
         }
