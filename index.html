@@ -280,16 +280,11 @@
             streaming = true;
             updateStatus('Processing video...', 'ready');
             
-            // Wait for video to be ready
-            if (video.elt.readyState >= 2) {
+            // Add a small delay to ensure video is fully loaded
+            setTimeout(() => {
                 console.log('Video ready. Starting OpenCV.js processing...');
                 requestAnimationFrame(processVideoFrame);
-            } else {
-                video.elt.addEventListener('loadeddata', () => {
-                    console.log('Video ready. Starting OpenCV.js processing...');
-                    requestAnimationFrame(processVideoFrame);
-                });
-            }
+            }, 1000);
         }
 
         function processVideoFrame() {
@@ -298,14 +293,27 @@
                 return;
             }
 
+            // Check if video has valid dimensions
+            if (video.elt.videoWidth === 0 || video.elt.videoHeight === 0) {
+                requestAnimationFrame(processVideoFrame);
+                return;
+            }
+
             try {
-                // Create temporary canvas for video processing
+                // First, draw the video frame directly to p5 canvas
+                push();
+                translate(width, 0);
+                scale(-1, 1);
+                image(video, 0, 0, width, height);
+                pop();
+
+                // Create temporary canvas for OpenCV processing
                 let tempCanvas = document.createElement('canvas');
                 tempCanvas.width = video.width;
                 tempCanvas.height = video.height;
                 let tempCtx = tempCanvas.getContext('2d');
 
-                // Draw flipped video
+                // Draw flipped video for processing
                 tempCtx.save();
                 tempCtx.translate(video.width, 0);
                 tempCtx.scale(-1, 1);
@@ -335,15 +343,6 @@
                 hierarchy = new cv.Mat();
                 
                 cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-                // Draw video frame
-                push();
-                translate(width, 0);
-                scale(-1, 1);
-                image(video, 0, 0, width, height);
-                pop();
-                
-                let minContourArea = parseInt(minContourAreaSliderHTML.value);
 
                 // Process contours
                 for (let i = 0; i < contours.size(); ++i) {
