@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenCV.js Contour Tracking with Gaussian Accumulation</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script async src="opencv.js" onload="onOpenCvReady();"></script>
-
-
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
 
     <style>
         body {
@@ -22,13 +20,24 @@
             border: 1px solid #ccc;
             margin-bottom: 20px;
             background-color: #fff;
+            position: relative;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 14px;
         }
         #controls {
             background-color: #fff;
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            width: 640px; /* Match canvas width */
+            width: 640px;
             display: flex;
             flex-direction: column;
             gap: 15px;
@@ -38,22 +47,14 @@
             flex-direction: column;
             gap: 5px;
         }
-        .checkbox-container {
+        .control-row {
             display: flex;
-            flex-wrap: wrap; /* Allow checkboxes to wrap */
-            gap: 10px;
-            max-height: 150px; /* Limit height and add scroll if many checkboxes */
-            overflow-y: auto;
-            padding: 5px 0;
-            border: 1px solid #eee;
-            border-radius: 4px;
-            background-color: #f9f9f9;
-        }
-        .checkbox-container label {
-            display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 5px;
-            margin-right: 10px; /* Spacing between checkboxes */
+        }
+        input[type="range"] {
+            flex: 1;
+            margin: 0 10px;
         }
         button {
             padding: 10px 15px;
@@ -68,100 +69,170 @@
         button:hover {
             background-color: #0056b3;
         }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+        .info {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
     <h1>OpenCV.js Contour Tracking with Gaussian Accumulation</h1>
-    <div id="p5-canvas-container"></div>
+    <div id="p5-canvas-container">
+        <div id="status">Initializing...</div>
+    </div>
     <div id="controls">
         <div class="control-group">
-            <label for="threshSlider">Threshold Value (for binarization):</label>
-            <input type="range" id="threshSlider" min="0" max="255" value="100" step="1">
-            <span id="threshValue">100</span>
+            <label>Threshold Value (for binarization):</label>
+            <div class="control-row">
+                <span>0</span>
+                <input type="range" id="threshSlider" min="0" max="255" value="100" step="1">
+                <span>255</span>
+                <span id="threshValue">100</span>
+            </div>
         </div>
+        
         <div class="control-group">
-            <label for="minContourAreaSlider">Minimum Contour Area:</label>
-            <input type="range" id="minContourAreaSlider" min="0" max="2000" value="200" step="10">
-            <span id="minContourAreaValue">200</span>
+            <label>Minimum Contour Area:</label>
+            <div class="control-row">
+                <span>0</span>
+                <input type="range" id="minContourAreaSlider" min="0" max="2000" value="200" step="10">
+                <span>2000</span>
+                <span id="minContourAreaValue">200</span>
+            </div>
         </div>
+        
         <div class="control-group">
-            <label for="gaussianKernelSizeSlider">Gaussian Kernel Size (pixels):</label>
-            <input type="range" id="gaussianKernelSizeSlider" min="5" max="51" value="15" step="2">
-            <span id="gaussianKernelSizeValue">15</span>
+            <label>Gaussian Kernel Size (pixels):</label>
+            <div class="control-row">
+                <span>5</span>
+                <input type="range" id="gaussianKernelSizeSlider" min="5" max="51" value="15" step="2">
+                <span>51</span>
+                <span id="gaussianKernelSizeValue">15</span>
+            </div>
         </div>
+        
         <div class="control-group">
-            <label for="gaussianSigmaSlider">Gaussian Sigma (blur amount):</label>
-            <input type="range" id="gaussianSigmaSlider" min="0.5" max="10" value="4" step="0.5">
-            <span id="gaussianSigmaValue">4</span>
+            <label>Gaussian Sigma (blur amount):</label>
+            <div class="control-row">
+                <span>0.5</span>
+                <input type="range" id="gaussianSigmaSlider" min="0.5" max="10" value="4" step="0.1">
+                <span>10</span>
+                <span id="gaussianSigmaValue">4</span>
+            </div>
         </div>
+        
         <div class="control-group">
-            <label for="overlayAlphaSlider">Accumulation Overlay Opacity:</label>
-            <input type="range" id="overlayAlphaSlider" min="0" max="100" value="30" step="1">
-            <span id="overlayAlphaValue">30%</span>
+            <label>Accumulation Overlay Opacity:</label>
+            <div class="control-row">
+                <span>0%</span>
+                <input type="range" id="overlayAlphaSlider" min="0" max="100" value="30" step="1">
+                <span>100%</span>
+                <span id="overlayAlphaValue">30%</span>
+            </div>
         </div>
 
         <div class="control-group">
-            <button id="saveAccumulationBtn">Save Accumulated Pattern (PNG)</button>
-            <button id="clearAccumulationBtn">Clear Accumulated Pattern</button>
+            <label>Background Subtraction:</label>
+            <div class="control-row">
+                <input type="checkbox" id="backgroundSubtraction" checked>
+                <label for="backgroundSubtraction">Enable background subtraction</label>
+                <button id="captureBackgroundBtn">Capture Background</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div class="button-group">
+                <button id="saveAccumulationBtn">Save Pattern (PNG)</button>
+                <button id="clearAccumulationBtn">Clear Pattern</button>
+                <button id="pauseBtn">Pause</button>
+            </div>
+        </div>
+
+        <div class="info">
+            <strong>Instructions:</strong><br>
+            • Move objects in front of the camera to track their movement patterns<br>
+            • The heat map shows accumulated movement over time<br>
+            • Use background subtraction for better object detection<br>
+            • Press 'S' to save, 'C' to clear, 'P' to pause/resume
         </div>
     </div>
 
     <script>
         let video;
-        let accumulatorLayer; // This will act like your Python 'accumulator'
-        let streaming = false; // Flag to indicate if video stream is active
-        let opencvReady = false; // Flag to indicate if OpenCV.js is loaded
+        let accumulatorLayer;
+        let backgroundLayer;
+        let streaming = false;
+        let opencvReady = false;
+        let isPaused = false;
+        let useBackgroundSubtraction = true;
 
-        // OpenCV.js Mats (Matrices) for image processing
+        // OpenCV.js Mats
         let srcMat;
         let grayMat;
         let blurredMat;
         let threshMat;
+        let backgroundMat;
+        let diffMat;
         let contours;
         let hierarchy;
 
-        // HTML elements references
-        let threshSliderHTML;
-        let threshValueSpan;
-        let minContourAreaSliderHTML;
-        let minContourAreaValueSpan;
-        let gaussianKernelSizeSliderHTML;
-        let gaussianKernelSizeValueSpan;
-        let gaussianSigmaSliderHTML;
-        let gaussianSigmaValueSpan;
-        let overlayAlphaSliderHTML;
-        let overlayAlphaValueSpan;
+        // HTML elements
+        let statusDiv;
+        let threshSlider, threshValue;
+        let minContourAreaSlider, minContourAreaValue;
+        let gaussianKernelSizeSlider, gaussianKernelSizeValue;
+        let gaussianSigmaSlider, gaussianSigmaValue;
+        let overlayAlphaSlider, overlayAlphaValue;
+        let backgroundSubtractionCheckbox;
+        let pauseBtn;
 
-        // Gaussian Kernel for accumulation
+        // Gaussian Kernel
         let gaussianAccumulationKernel = [];
         let currentGaussianKernelSize = 15;
         let currentGaussianSigma = 4;
 
-        // --- OpenCV.js ready callback ---
+        // Performance tracking
+        let frameCount = 0;
+        let lastTime = 0;
+        let fps = 0;
+
         function onOpenCvReady() {
             console.log('OpenCV.js is ready.');
             opencvReady = true;
-            // Initialize OpenCV.js Mats after it's ready
-            srcMat = new cv.Mat(480, 640, cv.CV_8UC4); // RGBA input
-            grayMat = new cv.Mat(480, 640, cv.CV_8UC1); // Grayscale
-            blurredMat = new cv.Mat(480, 640, cv.CV_8UC1); // Blurred grayscale
-            threshMat = new cv.Mat(480, 640, cv.CV_8UC1); // Binary thresholded
+            updateStatus('OpenCV.js loaded');
+            
+            // Initialize OpenCV.js Mats
+            srcMat = new cv.Mat(480, 640, cv.CV_8UC4);
+            grayMat = new cv.Mat(480, 640, cv.CV_8UC1);
+            blurredMat = new cv.Mat(480, 640, cv.CV_8UC1);
+            threshMat = new cv.Mat(480, 640, cv.CV_8UC1);
+            backgroundMat = new cv.Mat(480, 640, cv.CV_8UC1);
+            diffMat = new cv.Mat(480, 640, cv.CV_8UC1);
             contours = new cv.MatVector();
             hierarchy = new cv.Mat();
 
-            // Only call setup and start drawing if P5.js is also ready (which it usually is by this point)
-            if (typeof setup === 'function') {
-                // If P5.js setup hasn't run yet, it will now.
-                // If it has, no problem, just make sure loop() can start.
-                if (!streaming) { // Only if video hasn't started
-                    startCaptureAndProcessing();
-                }
-            } else {
-                 console.error("P5.js setup not found. Make sure p5.js loads correctly.");
+            if (!streaming) {
+                startCaptureAndProcessing();
             }
         }
 
-        // --- Gaussian Kernel Functions (Adapted from Python to P5.js Canvas) ---
+        function updateStatus(message) {
+            if (statusDiv) {
+                statusDiv.innerText = message;
+            }
+        }
+
         function generateGaussianAccumulationKernel(size, sigma) {
             let kernel = [];
             let sum = 0;
@@ -200,21 +271,45 @@
                     let pixelY = center_y + (ky - half);
 
                     if (pixelX >= 0 && pixelX < layer.width && pixelY >= 0 && pixelY < layer.height) {
-                        let index = (pixelX + pixelY * layer.width) * 4; // RGBA
-
-                        let currentVal = layer.pixels[index]; // Use red channel for accumulation
-                        let newValue = currentVal + (kernel[ky][kx] * 100); // Scale by factor
+                        let index = (pixelX + pixelY * layer.width) * 4;
+                        let currentVal = layer.pixels[index];
+                        let newValue = currentVal + (kernel[ky][kx] * 50);
 
                         layer.pixels[index] = Math.min(255, newValue);
                         layer.pixels[index + 1] = Math.min(255, newValue);
                         layer.pixels[index + 2] = Math.min(255, newValue);
-                        layer.pixels[index + 3] = 255; // Keep opaque during accumulation
+                        layer.pixels[index + 3] = 255;
                     }
                 }
             }
             layer.updatePixels();
         }
-        // --- End Gaussian Kernel Functions ---
+
+        function captureBackground() {
+            if (!opencvReady || !video) return;
+            
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = video.width;
+            tempCanvas.height = video.height;
+            let tempCtx = tempCanvas.getContext('2d');
+
+            tempCtx.save();
+            tempCtx.translate(video.width, 0);
+            tempCtx.scale(-1, 1);
+            tempCtx.drawImage(video.elt, 0, 0, video.width, video.height);
+            tempCtx.restore();
+
+            let imageData = tempCtx.getImageData(0, 0, video.width, video.height);
+            let tempMat = cv.matFromImageData(imageData);
+            cv.cvtColor(tempMat, backgroundMat, cv.COLOR_RGBA2GRAY);
+            
+            // Apply same blur as processing
+            let ksize = new cv.Size(7, 7);
+            cv.GaussianBlur(backgroundMat, backgroundMat, ksize, 0, 0, cv.BORDER_DEFAULT);
+            
+            tempMat.delete();
+            updateStatus('Background captured');
+        }
 
         function setup() {
             let canvas = createCanvas(640, 480);
@@ -225,216 +320,269 @@
             video.hide();
 
             accumulatorLayer = createGraphics(640, 480);
-            accumulatorLayer.background(0); // Start with black background (represents 0 accumulation)
+            accumulatorLayer.background(0);
 
-            // Get references to HTML elements
-            threshSliderHTML = document.getElementById('threshSlider');
-            threshValueSpan = document.getElementById('threshValue');
-            minContourAreaSliderHTML = document.getElementById('minContourAreaSlider');
-            minContourAreaValueSpan = document.getElementById('minContourAreaValue');
-            gaussianKernelSizeSliderHTML = document.getElementById('gaussianKernelSizeSlider');
-            gaussianKernelSizeValueSpan = document.getElementById('gaussianKernelSizeValue');
-            gaussianSigmaSliderHTML = document.getElementById('gaussianSigmaSlider');
-            gaussianSigmaValueSpan = document.getElementById('gaussianSigmaValue');
-            overlayAlphaSliderHTML = document.getElementById('overlayAlphaSlider');
-            overlayAlphaValueSpan = document.getElementById('overlayAlphaValue');
+            backgroundLayer = createGraphics(640, 480);
+            backgroundLayer.background(0);
 
-            // Initialize Gaussian accumulation kernel
-            currentGaussianKernelSize = parseInt(gaussianKernelSizeSliderHTML.value);
-            currentGaussianSigma = parseFloat(gaussianSigmaSliderHTML.value);
+            // Get HTML elements
+            statusDiv = document.getElementById('status');
+            threshSlider = document.getElementById('threshSlider');
+            threshValue = document.getElementById('threshValue');
+            minContourAreaSlider = document.getElementById('minContourAreaSlider');
+            minContourAreaValue = document.getElementById('minContourAreaValue');
+            gaussianKernelSizeSlider = document.getElementById('gaussianKernelSizeSlider');
+            gaussianKernelSizeValue = document.getElementById('gaussianKernelSizeValue');
+            gaussianSigmaSlider = document.getElementById('gaussianSigmaSlider');
+            gaussianSigmaValue = document.getElementById('gaussianSigmaValue');
+            overlayAlphaSlider = document.getElementById('overlayAlphaSlider');
+            overlayAlphaValue = document.getElementById('overlayAlphaValue');
+            backgroundSubtractionCheckbox = document.getElementById('backgroundSubtraction');
+            pauseBtn = document.getElementById('pauseBtn');
+
+            // Initialize values
+            currentGaussianKernelSize = parseInt(gaussianKernelSizeSlider.value);
+            currentGaussianSigma = parseFloat(gaussianSigmaSlider.value);
             gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
 
-            // Update span values based on initial slider values
-            threshValueSpan.innerText = threshSliderHTML.value;
-            minContourAreaValueSpan.innerText = minContourAreaSliderHTML.value;
-            gaussianKernelSizeValueSpan.innerText = gaussianKernelSizeSliderHTML.value;
-            gaussianSigmaValueSpan.innerText = gaussianSigmaSliderHTML.value;
-            overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%';
+            // Set up event listeners
+            setupEventListeners();
 
-            // Add event listeners for sliders
-            threshSliderHTML.addEventListener('input', () => threshValueSpan.innerText = threshSliderHTML.value);
-            minContourAreaSliderHTML.addEventListener('input', () => minContourAreaValueSpan.innerText = minContourAreaSliderHTML.value);
-            gaussianKernelSizeSliderHTML.addEventListener('input', () => {
-                currentGaussianKernelSize = parseInt(gaussianKernelSizeSliderHTML.value);
+            updateStatus('Waiting for camera...');
+
+            if (opencvReady && !streaming) {
+                startCaptureAndProcessing();
+            }
+        }
+
+        function setupEventListeners() {
+            threshSlider.addEventListener('input', () => {
+                threshValue.innerText = threshSlider.value;
+            });
+
+            minContourAreaSlider.addEventListener('input', () => {
+                minContourAreaValue.innerText = minContourAreaSlider.value;
+            });
+
+            gaussianKernelSizeSlider.addEventListener('input', () => {
+                currentGaussianKernelSize = parseInt(gaussianKernelSizeSlider.value);
                 if (currentGaussianKernelSize % 2 === 0) currentGaussianKernelSize += 1;
-                gaussianKernelSizeSliderHTML.value = currentGaussianKernelSize;
-                gaussianKernelSizeValueSpan.innerText = currentGaussianKernelSize;
+                gaussianKernelSizeSlider.value = currentGaussianKernelSize;
+                gaussianKernelSizeValue.innerText = currentGaussianKernelSize;
                 gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
             });
-            gaussianSigmaSliderHTML.addEventListener('input', () => {
-                currentGaussianSigma = parseFloat(gaussianSigmaSliderHTML.value);
-                gaussianSigmaValueSpan.innerText = currentGaussianSigma;
+
+            gaussianSigmaSlider.addEventListener('input', () => {
+                currentGaussianSigma = parseFloat(gaussianSigmaSlider.value);
+                gaussianSigmaValue.innerText = currentGaussianSigma;
                 gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
             });
-            overlayAlphaSliderHTML.addEventListener('input', () => overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%');
 
+            overlayAlphaSlider.addEventListener('input', () => {
+                overlayAlphaValue.innerText = overlayAlphaSlider.value + '%';
+            });
 
-            // Set up button listeners
+            backgroundSubtractionCheckbox.addEventListener('change', () => {
+                useBackgroundSubtraction = backgroundSubtractionCheckbox.checked;
+            });
+
+            document.getElementById('captureBackgroundBtn').addEventListener('click', captureBackground);
+
             document.getElementById('saveAccumulationBtn').addEventListener('click', () => {
                 accumulatorLayer.save('gaussian_accumulation_pattern.png');
             });
+
             document.getElementById('clearAccumulationBtn').addEventListener('click', () => {
-                accumulatorLayer.background(0); // Reset accumulator layer to black
-                console.log('Accumulated pattern cleared.');
+                accumulatorLayer.background(0);
+                updateStatus('Pattern cleared');
             });
 
-            // Start capture and processing only if OpenCV is ready
-            // The onOpenCvReady() function will call this if opencv.js loads AFTER p5.js
-            // If p5.js setup runs first, we wait for onOpenCvReady.
-            if (opencvReady && !streaming) {
-                 startCaptureAndProcessing();
-            }
+            pauseBtn.addEventListener('click', () => {
+                isPaused = !isPaused;
+                pauseBtn.innerText = isPaused ? 'Resume' : 'Pause';
+                updateStatus(isPaused ? 'Paused' : 'Running');
+            });
         }
 
-        // This function starts the continuous video processing loop
         function startCaptureAndProcessing() {
             streaming = true;
             video.elt.addEventListener('loadeddata', () => {
-                console.log('Video ready. Starting OpenCV.js processing...');
-                requestAnimationFrame(processVideoFrame); // Start the loop
+                updateStatus('Camera ready');
+                // Capture initial background
+                setTimeout(() => {
+                    captureBackground();
+                    requestAnimationFrame(processVideoFrame);
+                }, 1000);
             });
         }
 
-
-        // Main loop for video processing and drawing
         function processVideoFrame() {
             if (!streaming || !opencvReady) {
-                requestAnimationFrame(processVideoFrame); // Keep trying if not ready
+                requestAnimationFrame(processVideoFrame);
                 return;
             }
 
-            // Get the current frame from the P5.js video element
-            // You can draw the video to a temporary p5.Graphics or directly read its pixels.
-            // For OpenCV.js, it's often easiest to draw it to a temporary canvas,
-            // then get its imageData.
-            // Create a temporary canvas context to get image data
-            let tempCanvas = document.createElement('canvas');
-            tempCanvas.width = video.width;
-            tempCanvas.height = video.height;
-            let tempCtx = tempCanvas.getContext('2d');
+            if (isPaused) {
+                requestAnimationFrame(processVideoFrame);
+                return;
+            }
 
-            // Draw the flipped video to the temporary canvas
-            tempCtx.save();
-            tempCtx.translate(video.width, 0);
-            tempCtx.scale(-1, 1);
-            tempCtx.drawImage(video.elt, 0, 0, video.width, video.height);
-            tempCtx.restore();
+            // Performance tracking
+            let currentTime = performance.now();
+            if (currentTime - lastTime > 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                lastTime = currentTime;
+            }
+            frameCount++;
 
-            let imageData = tempCtx.getImageData(0, 0, video.width, video.height);
-            srcMat = cv.matFromImageData(imageData); // Convert imageData to OpenCV Mat
+            try {
+                // Get current frame
+                let tempCanvas = document.createElement('canvas');
+                tempCanvas.width = video.width;
+                tempCanvas.height = video.height;
+                let tempCtx = tempCanvas.getContext('2d');
 
-            // --- OpenCV.js Processing (mimicking your Python script) ---
+                tempCtx.save();
+                tempCtx.translate(video.width, 0);
+                tempCtx.scale(-1, 1);
+                tempCtx.drawImage(video.elt, 0, 0, video.width, video.height);
+                tempCtx.restore();
 
-            // 1. Convert to Grayscale
-            cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY);
+                let imageData = tempCtx.getImageData(0, 0, video.width, video.height);
+                srcMat = cv.matFromImageData(imageData);
 
-            // 2. Blur
-            let ksize = new cv.Size(7, 7); // Fixed blur kernel size
-            cv.GaussianBlur(grayMat, blurredMat, ksize, 0, 0, cv.BORDER_DEFAULT);
+                // Convert to grayscale
+                cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY);
 
-            // 3. Threshold (Binarize)
-            let threshValue = parseInt(threshSliderHTML.value);
-            cv.threshold(blurredMat, threshMat, threshValue, 255, cv.THRESH_BINARY_INV);
+                // Apply blur
+                let ksize = new cv.Size(7, 7);
+                cv.GaussianBlur(grayMat, blurredMat, ksize, 0, 0, cv.BORDER_DEFAULT);
 
-            // 4. Find Contours
-            contours.clear(); // Clear previous contours
-            hierarchy.delete(); // Delete previous hierarchy
-            cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                // Background subtraction if enabled
+                if (useBackgroundSubtraction && backgroundMat.rows > 0) {
+                    cv.absdiff(blurredMat, backgroundMat, diffMat);
+                    cv.threshold(diffMat, threshMat, 30, 255, cv.THRESH_BINARY);
+                } else {
+                    // Regular thresholding
+                    let threshValue = parseInt(threshSlider.value);
+                    cv.threshold(blurredMat, threshMat, threshValue, 255, cv.THRESH_BINARY_INV);
+                }
 
-            // --- Drawing on P5.js Canvas ---
-            // Draw the main video frame (already flipped via tempCtx)
-            image(video, 0, 0, width, height);
+                // Find contours
+                contours.clear();
+                if (hierarchy.rows > 0) hierarchy.delete();
+                hierarchy = new cv.Mat();
+                cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-            let minContourArea = parseInt(minContourAreaSliderHTML.value);
+                // Draw video frame
+                image(video, 0, 0, width, height);
 
-            for (let i = 0; i < contours.size(); ++i) {
-                let cnt = contours.get(i);
-                let area = cv.contourArea(cnt);
+                // Process contours
+                let minContourArea = parseInt(minContourAreaSlider.value);
+                let contoursFound = 0;
 
-                if (area > minContourArea) {
-                    // Calculate Moments and Centroid
-                    let M = cv.moments(cnt, false);
-                    if (M.m00 !== 0) {
-                        let cx = M.m10 / M.m00;
-                        let cy = M.m01 / M.m00;
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
 
-                        // Draw contour (P5.js equivalent of cv2.drawContours)
-                        // This requires converting OpenCV Mat to p5.Image or drawing point by point.
-                        // For simplicity, let's draw bounding box for now, or just a circle.
-                        // To draw actual contours, we'd need to convert contours to p5.Vector arrays.
-                        let rect = cv.boundingRect(cnt);
-                        stroke(0, 255, 0); // Green bounding box
-                        strokeWeight(2);
-                        noFill();
-                        rect(rect.x, rect.y, rect.width, rect.height); // Draw bounding box
+                    if (area > minContourArea) {
+                        contoursFound++;
+                        
+                        // Calculate moments and centroid
+                        let M = cv.moments(cnt, false);
+                        if (M.m00 !== 0) {
+                            let cx = M.m10 / M.m00;
+                            let cy = M.m01 / M.m00;
 
-                        // Draw current centroid in red
-                        fill(255, 0, 0); // Red
-                        noStroke();
-                        ellipse(cx, cy, 8, 8);
+                            // Draw bounding box
+                            let rect = cv.boundingRect(cnt);
+                            stroke(0, 255, 0);
+                            strokeWeight(2);
+                            noFill();
+                            rect(rect.x, rect.y, rect.width, rect.height);
 
-                        // Add Gaussian point to accumulatorLayer
-                        addGaussianPointToLayer(accumulatorLayer, gaussianAccumulationKernel, cx, cy);
+                            // Draw centroid
+                            fill(255, 0, 0);
+                            noStroke();
+                            ellipse(cx, cy, 8, 8);
+
+                            // Add to accumulator
+                            addGaussianPointToLayer(accumulatorLayer, gaussianAccumulationKernel, cx, cy);
+                        }
                     }
+                    cnt.delete();
                 }
-                cnt.delete(); // Release contour Mat memory
+
+                // Overlay accumulator layer
+                if (parseFloat(overlayAlphaSlider.value) > 0) {
+                    // Create normalized overlay
+                    accumulatorLayer.loadPixels();
+                    let maxAccumulation = 0;
+                    for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
+                        if (accumulatorLayer.pixels[i] > maxAccumulation) {
+                            maxAccumulation = accumulatorLayer.pixels[i];
+                        }
+                    }
+
+                    if (maxAccumulation > 0) {
+                        let overlayAlpha = parseFloat(overlayAlphaSlider.value) / 100;
+                        for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
+                            let normalizedVal = map(accumulatorLayer.pixels[i], 0, maxAccumulation, 0, 255);
+                            accumulatorLayer.pixels[i] = normalizedVal;
+                            accumulatorLayer.pixels[i+1] = normalizedVal;
+                            accumulatorLayer.pixels[i+2] = normalizedVal;
+                            accumulatorLayer.pixels[i+3] = 255 * overlayAlpha;
+                        }
+                    }
+                    accumulatorLayer.updatePixels();
+                    image(accumulatorLayer, 0, 0);
+                }
+
+                // Update status
+                updateStatus(`FPS: ${fps} | Contours: ${contoursFound}`);
+
+            } catch (error) {
+                console.error('Processing error:', error);
+                updateStatus('Processing error');
             }
 
-            // --- Normalize and Overlay Accumulator Layer ---
-            accumulatorLayer.loadPixels();
-            let maxAccumulation = 0;
-            for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
-                if (accumulatorLayer.pixels[i] > maxAccumulation) {
-                    maxAccumulation = accumulatorLayer.pixels[i];
-                }
-            }
+            // Clean up
+            if (srcMat) srcMat.delete();
 
-            if (maxAccumulation > 0) {
-                let overlayAlpha = parseFloat(overlayAlphaSliderHTML.value) / 100; // 0.0 to 1.0
-                for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
-                    let normalizedVal = map(accumulatorLayer.pixels[i], 0, maxAccumulation, 0, 255);
-                    accumulatorLayer.pixels[i] = normalizedVal;     // Red
-                    accumulatorLayer.pixels[i+1] = normalizedVal;   // Green
-                    accumulatorLayer.pixels[i+2] = normalizedVal;   // Blue
-                    accumulatorLayer.pixels[i+3] = 255 * overlayAlpha; // Apply transparency
-                }
-            }
-            accumulatorLayer.updatePixels();
-            image(accumulatorLayer, 0, 0); // Overlay the accumulated pattern
-
-            // Release OpenCV.js Mats that are no longer needed for this frame
-            srcMat.release(); // Important to release memory
-            // grayMat.release(); // These are reused, no need to release here
-            // blurredMat.release();
-            // threshMat.release();
-            // contours.delete(); // Contours are cleared and re-populated each frame
-            // hierarchy.delete(); // Hierarchy is deleted and re-populated each frame
-
-            // Request next frame
             requestAnimationFrame(processVideoFrame);
         }
 
-        // --- Cleanup on window close or reload ---
-        window.onbeforeunload = function() {
-            if (srcMat) srcMat.delete();
-            if (grayMat) grayMat.delete();
-            if (blurredMat) blurredMat.delete();
-            if (threshMat) threshMat.delete();
-            if (contours) contours.delete();
-            if (hierarchy) hierarchy.delete();
-            console.log("OpenCV.js memory released.");
-        };
-
-        // Optional: Keep keyPressed for alternative input
         function keyPressed() {
             if (key === 's' || key === 'S') {
                 accumulatorLayer.save('gaussian_accumulation_pattern.png');
             }
             if (key === 'c' || key === 'C') {
                 accumulatorLayer.background(0);
-                console.log('Accumulated pattern cleared.');
+                updateStatus('Pattern cleared');
+            }
+            if (key === 'p' || key === 'P') {
+                isPaused = !isPaused;
+                pauseBtn.innerText = isPaused ? 'Resume' : 'Pause';
+                updateStatus(isPaused ? 'Paused' : 'Running');
+            }
+            if (key === 'b' || key === 'B') {
+                captureBackground();
             }
         }
+
+        // Cleanup
+        window.addEventListener('beforeunload', () => {
+            if (srcMat) srcMat.delete();
+            if (grayMat) grayMat.delete();
+            if (blurredMat) blurredMat.delete();
+            if (threshMat) threshMat.delete();
+            if (backgroundMat) backgroundMat.delete();
+            if (diffMat) diffMat.delete();
+            if (contours) contours.delete();
+            if (hierarchy) hierarchy.delete();
+            console.log("OpenCV.js memory cleaned up");
+        });
     </script>
 </body>
 </html>
