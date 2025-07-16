@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>From Bits To Atoms - Canny Edge Detection</title>
+    <title>OpenCV.js Contour Tracking & Accumulation</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="jsfeat.min.js"></script> 
-    
+    <script async src="opencv.js" onload="onOpenCvReady();"></script>
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -16,7 +16,7 @@
             margin: 20px;
             background-color: #f0f0f0;
         }
-        #fbtaSketch {
+        #p5-canvas-container {
             border: 1px solid #ccc;
             margin-bottom: 20px;
             background-color: #fff;
@@ -62,184 +62,335 @@
     </style>
 </head>
 <body>
-    <h1>From Bits To Atoms - Canny Edge Detection</h1>
-    <div id="fbtaSketch"></div>
+    <h1>OpenCV.js Contour Tracking & Accumulation</h1>
+    <div id="p5-canvas-container"></div>
     <div id="controls">
         <div class="control-group">
-            <label for="blurSize">Blur Size:</label>
-            <input type="range" id="blurSize" min="0" max="100" value="50">
-            <span id="blurValue">50</span>
+            <label for="threshSlider">Umbral de Binarización (0-255):</label>
+            <input type="range" id="threshSlider" min="0" max="255" value="100" step="1">
+            <span id="threshValue">100</span>
         </div>
         <div class="control-group">
-            <label for="lowThreshold">Low Threshold:</label>
-            <input type="range" id="lowThreshold" min="0" max="100" value="20">
-            <span id="lowThreshValue">20</span>
+            <label for="minContourAreaSlider">Área Mínima del Contorno (píxeles):</label>
+            <input type="range" id="minContourAreaSlider" min="0" max="2000" value="200" step="10">
+            <span id="minContourAreaValue">200</span>
         </div>
         <div class="control-group">
-            <label for="highThreshold">High Threshold:</label>
-            <input type="range" id="highThreshold" min="0" max="100" value="70">
-            <span id="highThreshValue">70</span>
+            <label for="overlayAlphaSlider">Opacidad de la Acumulación:</label>
+            <input type="range" id="overlayAlphaSlider" min="0" max="100" value="30" step="1">
+            <span id="overlayAlphaValue">30%</span>
         </div>
-        <button onclick="doScan()">Save Edge Image (PNG)</button>
+
+        <div class="control-group">
+            <button id="saveAccumulationBtn">Guardar Patrón Acumulado (PNG)</button>
+            <button id="clearAccumulationBtn">Limpiar Patrón Acumulado</button>
+        </div>
     </div>
 
     <script>
-        // Global variables for P5.js and jsfeat
-        var capture;
-        var buffer; // jsfeat buffer for grayscale image
-        var result; // P5.Image to store jsfeat's output
-        var w = 640, h = 480; // Default dimensions
+        let video;
+        let accumulatorLayer; // Esta será la capa de acumulación Gaussiana
+        let streaming = false; // Bandera para indicar si el video está activo
+        let opencvReady = false; // Bandera para indicar si OpenCV.js está cargado y listo
 
-        // References to HTML slider elements and their value displays
-        let blurSizeSlider, lowThresholdSlider, highThresholdSlider;
-        let blurValueSpan, lowThreshValueSpan, highThreshValueSpan;
+        // Matrices de OpenCV.js para el procesamiento de imágenes
+        let srcMat = null;
+        let grayMat = null;
+        let blurredMat = null;
+        let threshMat = null;
+        let contours = null;
+        let hierarchy = null;
 
-        function setup() {
-            // Adjust dimensions and camera constraints for mobile devices
-            if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-                w = 360;
-                h = 270;
-                var constraints = {
-                    audio: false,
-                    video: {
-                        facingMode: {
-                            exact: "environment" // Prefer back camera on mobile
-                        }
-                    }
-                };
-                capture = createCapture(constraints);
+        // Referencias a los elementos HTML de los sliders
+        let threshSliderHTML;
+        let threshValueSpan;
+        let minContourAreaSliderHTML;
+        let minContourAreaValueSpan;
+        let overlayAlphaSliderHTML;
+        let overlayAlphaValueSpan;
+
+        // Parámetros fijos para el kernel Gaussiano de acumulación
+        const GAUSSIAN_KERNEL_SIZE = 15; // Tamaño fijo del kernel (debe ser impar)
+        const GAUSSIAN_SIGMA = 4;        // Sigma fijo para el desenfoque Gaussiano
+        let gaussianAccumulationKernel = []; // El kernel Gaussiano pre-calculado
+
+        // --- Callback cuando OpenCV.js esté listo ---
+        function onOpenCvReady() {
+            console.log('OpenCV.js está listo.');
+            opencvReady = true;
+            
+            // Inicializar las matrices de OpenCV.js SÓLO después de que esté listo y 'cv' esté definido
+            srcMat = new cv.Mat(480, 640, cv.CV_8UC4); // Entrada RGBA (de P5.js getImageData)
+            grayMat = new cv.Mat(480, 640, cv.CV_8UC1); // Escala de grises
+            blurredMat = new cv.Mat(480, 640, cv.CV_8UC1); // Desenfoque (Grayscale)
+            threshMat = new cv.Mat(480, 640, cv.CV_8UC1); // Binarizado
+            contours = new cv.MatVector(); // Para almacenar los contornos detectados
+            hierarchy = new cv.Mat(); // Para almacenar la jerarquía de contornos
+
+            // Generar el kernel Gaussiano de acumulación una sola vez al inicio
+            gaussianAccumulationKernel = generateGaussianAccumulationKernel(GAUSSIAN_KERNEL_SIZE, GAUSSIAN_SIGMA);
+
+            // Si el video de P5.js ya está listo, iniciar el procesamiento
+            if (video && video.elt && !streaming) {
+                startCaptureAndProcessing();
             } else {
-                capture = createCapture(VIDEO); // Default camera for desktop
+                console.log("El video de P5.js aún no está cargado. Esperando el evento 'loadeddata'.");
             }
-
-            // Create P5.js canvas and attach it to the 'fbtaSketch' div
-            var myCanvas = createCanvas(w, h, SVG); // Use SVG renderer
-            myCanvas.parent("fbtaSketch");
-
-            // Set video size to match canvas and hide the raw video element
-            capture.size(w, h);
-            capture.hide();
-
-            // Initialize jsfeat buffer for grayscale processing
-            buffer = new jsfeat.matrix_t(w, h, jsfeat.U8C1_t);
-
-            // Get references to HTML slider elements and their value displays
-            blurSizeSlider = document.getElementById('blurSize');
-            lowThresholdSlider = document.getElementById('lowThreshold');
-            highThresholdSlider = document.getElementById('highThreshold');
-
-            blurValueSpan = document.getElementById('blurValue');
-            lowThreshValueSpan = document.getElementById('lowThreshValue');
-            highThreshValueSpan = document.getElementById('highThreshValue');
-
-            // Update displayed values when sliders are moved
-            blurSizeSlider.addEventListener('input', () => blurValueSpan.innerText = blurSizeSlider.value);
-            lowThresholdSlider.addEventListener('input', () => lowThreshValueSpan.innerText = lowThresholdSlider.value);
-            highThresholdSlider.addEventListener('input', () => highThreshValueSpan.innerText = highThresholdSlider.value);
-
-            // Initial update of slider values
-            blurValueSpan.innerText = blurSizeSlider.value;
-            lowThreshValueSpan.innerText = lowThresholdSlider.value;
-            highThreshValueSpan.innerText = highThresholdSlider.value;
         }
 
-        function draw() {
-            // Set stroke for any lines (not directly used for the edge image, but good practice)
-            stroke('red');
-            strokeWeight(2);
+        // --- Funciones del Kernel Gaussiano (adaptadas para el canvas de P5.js) ---
+        function generateGaussianAccumulationKernel(size, sigma) {
+            let kernel = [];
+            let sum = 0;
+            let half = (size - 1) / 2;
 
-            // Load pixels from the video capture
-            capture.loadPixels();
+            for (let y = 0; y < size; y++) {
+                let row = [];
+                for (let x = 0; x < size; x++) {
+                    let dx = x - half;
+                    let dy = y - half;
+                    let value = Math.exp(-0.5 * (dx * dx + dy * dy) / (sigma * sigma));
+                    row.push(value);
+                    sum += value;
+                }
+                kernel.push(row);
+            }
 
-            // Only process if video pixels are available
-            if (capture.pixels.length > 0) {
-                // Get slider values and map them to jsfeat's expected ranges
-                let blurSize = parseInt(blurSizeSlider.value);
-                let lowThreshold = parseInt(lowThresholdSlider.value);
-                let highThreshold = parseInt(highThresholdSlider.value);
-                
-                // Map slider values for blur and thresholds
-                // blurSize needs to be an odd integer, and usually positive. 
-                // A value of 0 from slider maps to 1 for jsfeat, max 100 maps to 12 (approx)
-                blurSize = map(blurSize, 0, 100, 1, 12); 
-                // Ensure blurSize is an odd number for jsfeat.gaussian_blur
-                if (blurSize % 2 === 0) blurSize++; 
+            // Normalizar el kernel para asegurar que la suma de pesos sea 1
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    kernel[y][x] /= sum;
+                }
+            }
+            return kernel;
+        }
 
-                lowThreshold = map(lowThreshold, 0, 100, 0, 255);
-                highThreshold = map(highThreshold, 0, 100, 0, 255);
+        function addGaussianPointToLayer(layer, kernel, center_x, center_y) {
+            let k_size = kernel.length;
+            let half = Math.floor(k_size / 2);
 
-                // --- jsfeat image processing steps ---
-                // 1. Convert video pixels to grayscale jsfeat buffer
-                jsfeat.imgproc.grayscale(capture.pixels, w, h, buffer);
-                
-                // 2. Apply Gaussian blur
-                jsfeat.imgproc.gaussian_blur(buffer, buffer, blurSize, 0);
-                
-                // 3. Perform Canny edge detection
-                jsfeat.imgproc.canny(buffer, buffer, lowThreshold, highThreshold);
+            layer.loadPixels(); // Cargar los píxeles de la capa de acumulación
 
-                // Convert jsfeat buffer back to P5.Image
-                result = jsfeatToP5(buffer, result);
-                
-                // Invert the colors of the result image (edges will be black on white, or vice-versa)
-                result.loadPixels();
-                for (let y = 0; y < result.height; y++) {
-                    for (let x = 0; x < result.width; x++) {
-                        const index = (y * result.width + x) * 4; // RGBA pixel index
-                        const r = result.pixels[index + 0];
-                        const g = result.pixels[index + 1];
-                        const b = result.pixels[index + 2];
-                        
-                        // Invert RGB values
-                        result.pixels[index + 0] = 255 - r;
-                        result.pixels[index + 1] = 255 - g;
-                        result.pixels[index + 2] = 255 - b;
-                        // Alpha remains 255
+            for (let ky = 0; ky < k_size; ky++) {
+                for (let kx = 0; kx < k_size; kx++) {
+                    let pixelX = center_x + (kx - half);
+                    let pixelY = center_y + (ky - half);
+
+                    // Verificar límites para evitar dibujar fuera de la capa
+                    if (pixelX >= 0 && pixelX < layer.width && pixelY >= 0 && pixelY < layer.height) {
+                        let index = (pixelX + pixelY * layer.width) * 4; // Índice RGBA
+
+                        let currentVal = layer.pixels[index]; // Leer el valor de acumulación existente (canal rojo)
+                        // Añadir el peso del kernel, escalado para ser más visible (ajusta 100 si es necesario)
+                        let newValue = currentVal + (kernel[ky][kx] * 100); 
+
+                        // Limitar los valores a 255 y actualizar todos los canales RGB
+                        layer.pixels[index] = Math.min(255, newValue);
+                        layer.pixels[index + 1] = Math.min(255, newValue);
+                        layer.pixels[index + 2] = Math.min(255, newValue);
+                        layer.pixels[index + 3] = 255; // Mantener opaco durante el proceso de acumulación
                     }
                 }
-                result.updatePixels(); // Apply pixel changes
+            }
+            layer.updatePixels(); // Aplicar los cambios de píxeles a la capa de acumulación
+        }
+        // --- Fin de las Funciones del Kernel Gaussiano ---
 
-                // Display the processed image on the canvas
-                image(result, 0, 0, w, h);
+        function setup() {
+            let canvas = createCanvas(640, 480);
+            canvas.parent('p5-canvas-container'); // Adjuntar el canvas al div HTML
+
+            video = createCapture(VIDEO); // Iniciar la captura de video
+            video.size(640, 480); // Establecer las dimensiones del video
+            video.hide(); // Ocultar el elemento de video HTML predeterminado
+
+            accumulatorLayer = createGraphics(640, 480); // Crear un buffer de gráficos P5.js separado para la acumulación
+            accumulatorLayer.background(0); // Inicializar la capa de acumulación en negro
+
+            // Obtener referencias a los elementos HTML de los sliders y sus spans de valor
+            threshSliderHTML = document.getElementById('threshSlider');
+            threshValueSpan = document.getElementById('threshValue');
+            minContourAreaSliderHTML = document.getElementById('minContourAreaSlider');
+            minContourAreaValueSpan = document.getElementById('minContourAreaValue');
+            overlayAlphaSliderHTML = document.getElementById('overlayAlphaSlider');
+            overlayAlphaValueSpan = document.getElementById('overlayAlphaValue');
+
+            // Actualizar los valores de los spans basándose en los valores iniciales de los sliders
+            threshValueSpan.innerText = threshSliderHTML.value;
+            minContourAreaValueSpan.innerText = minContourAreaSliderHTML.value;
+            overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%';
+
+            // Añadir escuchadores de eventos para los sliders para actualizar los valores mostrados
+            threshSliderHTML.addEventListener('input', () => threshValueSpan.innerText = threshSliderHTML.value);
+            minContourAreaSliderHTML.addEventListener('input', () => minContourAreaValueSpan.innerText = minContourAreaSliderHTML.value);
+            overlayAlphaSliderHTML.addEventListener('input', () => overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%');
+
+            // Configurar los escuchadores de los botones
+            document.getElementById('saveAccumulationBtn').addEventListener('click', () => {
+                accumulatorLayer.save('gaussian_accumulation_pattern.png');
+            });
+            document.getElementById('clearAccumulationBtn').addEventListener('click', () => {
+                accumulatorLayer.background(0); // Restablecer la capa de acumulación a negro
+                console.log('Patrón acumulado limpiado.');
+            });
+
+            // Iniciar la captura y el procesamiento solo si OpenCV está listo
+            if (opencvReady && !streaming) {
+                 startCaptureAndProcessing();
             }
         }
 
-        // Function to save the current edge-detected image
-        function doScan() {
-            print("Screenshot!");
-            save(result, 'fbta_' + int(random(1000)) + '_falabbcn.png');
+        // Esta función inicia el bucle continuo de procesamiento de video
+        function startCaptureAndProcessing() {
+            streaming = true;
+            // Asegurarse de que el elemento de video haya cargado datos antes de intentar procesar frames
+            video.elt.addEventListener('loadeddata', () => {
+                console.log('Video listo. Iniciando el procesamiento de OpenCV.js...');
+                // Solicitar el procesamiento del primer frame, que luego se ejecutará en bucle
+                requestAnimationFrame(processVideoFrame); 
+            });
         }
 
-        // Optional: Keyboard shortcut for saving the image
+        // Bucle principal para el procesamiento de video y el dibujo
+        function processVideoFrame() {
+            // Detener si el streaming está apagado o OpenCV no está listo
+            if (!streaming || !opencvReady || !srcMat) { // También verificar que srcMat esté inicializado
+                requestAnimationFrame(processVideoFrame); 
+                return;
+            }
+
+            // Obtener el frame actual del elemento de video de P5.js
+            // Dibujar el video volteado a un canvas temporal para obtener ImageData para OpenCV.js
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = video.width;
+            tempCanvas.height = video.height;
+            let tempCtx = tempCanvas.getContext('2d');
+
+            // Dibujar el video volteado horizontalmente en el canvas temporal
+            tempCtx.save();
+            tempCtx.translate(video.width, 0);
+            tempCtx.scale(-1, 1);
+            tempCtx.drawImage(video.elt, 0, 0, video.width, video.height);
+            tempCtx.restore();
+
+            let imageData = tempCtx.getImageData(0, 0, video.width, video.height);
+            // Convertir ImageData a un Mat de OpenCV (cv.CV_8UC4 para RGBA)
+            srcMat.cols = imageData.width; // Asegurar que las dimensiones sean correctas
+            srcMat.rows = imageData.height;
+            srcMat.data.set(imageData.data); // Copiar los datos de píxeles
+
+            // --- Procesamiento de OpenCV.js ---
+
+            // 1. Convertir RGBA (del video) a Escala de Grises
+            cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY);
+
+            // 2. Desenfoque Gaussiano de la imagen en escala de grises (kernel 7x7 fijo)
+            let ksize = new cv.Size(7, 7); 
+            cv.GaussianBlur(grayMat, blurredMat, ksize, 0, 0, cv.BORDER_DEFAULT);
+
+            // 3. Umbral (Binarizar) la imagen desenfocada
+            let threshValue = parseInt(threshSliderHTML.value);
+            // THRESH_BINARY_INV: píxeles > threshValue se vuelven 0 (negro), otros 255 (blanco)
+            cv.threshold(blurredMat, threshMat, threshValue, 255, cv.THRESH_BINARY_INV);
+
+            // 4. Encontrar Contornos en la imagen binaria
+            // Limpiar contornos y jerarquía anteriores para evitar fugas de memoria y reutilizar objetos
+            contours.clear(); 
+            hierarchy.delete(); // Eliminar y volver a crear para asegurar un comienzo fresco
+            hierarchy = new cv.Mat(); // Volver a crear la Mat de jerarquía
+            // cv.RETR_EXTERNAL: recupera solo los contornos externos extremos
+            // cv.CHAIN_APPROX_SIMPLE: comprime segmentos horizontales, verticales y diagonales
+            cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            // --- Dibujar en el Canvas de P5.js ---
+            // Dibujar el frame de video original (volteado)
+            push();
+            translate(width, 0);
+            scale(-1, 1);
+            image(video, 0, 0, width, height);
+            pop();
+            
+            let minContourArea = parseInt(minContourAreaSliderHTML.value);
+
+            // Iterar a través de los contornos detectados
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i); // Obtener el contorno actual
+                let area = cv.contourArea(cnt); // Calcular su área
+
+                if (area > minContourArea) { // Filtrar por área mínima
+                    // Calcular Momentos para encontrar el centroide
+                    let M = cv.moments(cnt, false);
+                    if (M.m00 !== 0) { // Evitar la división por cero
+                        let cx = M.m10 / M.m00; // Centroid X
+                        let cy = M.m01 / M.m00; // Centroid Y
+
+                        // Dibujar el cuadro delimitador alrededor del contorno
+                        let rect = cv.boundingRect(cnt);
+                        stroke(0, 255, 0); // Color verde
+                        strokeWeight(2);
+                        noFill();
+                        rect(rect.x, rect.y, rect.width, rect.height); // Dibujar cuadro delimitador
+
+                        // Dibujar el círculo del centroide en rojo
+                        fill(255, 0, 0); // Color rojo
+                        noStroke();
+                        ellipse(cx, cy, 8, 8); // Pequeño círculo rojo
+
+                        // Añadir un punto Gaussiano a accumulatorLayer en el centroide
+                        addGaussianPointToLayer(accumulatorLayer, gaussianAccumulationKernel, cx, cy);
+                    }
+                }
+                cnt.delete(); // IMPORTANTE: Liberar la memoria del Mat del contorno después de usarlo
+            }
+
+            // --- Normalizar y Superponer la Capa de Acumulación ---
+            accumulatorLayer.loadPixels();
+            let maxAccumulation = 0;
+            // Encontrar el valor máximo de acumulación en la capa
+            for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
+                if (accumulatorLayer.pixels[i] > maxAccumulation) {
+                    maxAccumulation = accumulatorLayer.pixels[i];
+                }
+            }
+
+            if (maxAccumulation > 0) {
+                let overlayAlpha = parseFloat(overlayAlphaSliderHTML.value) / 100; // Convertir a 0.0-1.0
+                // Normalizar y aplicar transparencia a los píxeles de la capa de acumulación
+                for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
+                    let normalizedVal = map(accumulatorLayer.pixels[i], 0, maxAccumulation, 0, 255);
+                    accumulatorLayer.pixels[i] = normalizedVal;     // Rojo
+                    accumulatorLayer.pixels[i+1] = normalizedVal;   // Verde
+                    accumulatorLayer.pixels[i+2] = normalizedVal;   // Azul
+                    accumulatorLayer.pixels[i+3] = 255 * overlayAlpha; // Aplicar transparencia
+                }
+            }
+            accumulatorLayer.updatePixels(); // Aplicar los cambios de píxeles a la capa de acumulación
+            image(accumulatorLayer, 0, 0); // Superponer el patrón acumulado en el canvas principal
+
+            // Solicitar el siguiente frame para continuar el bucle
+            requestAnimationFrame(processVideoFrame);
+        }
+
+        // --- Limpieza al cerrar o recargar la ventana (¡IMPORTANTE para la memoria de OpenCV.js!) ---
+        window.onbeforeunload = function() {
+            if (srcMat) srcMat.delete();
+            if (grayMat) grayMat.delete();
+            if (blurredMat) blurredMat.delete();
+            if (threshMat) threshMat.delete();
+            if (contours) contours.delete(); // Eliminar MatVector
+            if (hierarchy) hierarchy.delete(); // Eliminar Mat de jerarquía
+            console.log("Memoria de OpenCV.js liberada.");
+        };
+
+        // Opcional: Atajos de teclado para guardar y limpiar
         function keyPressed() {
-            if (keyCode === DOWN_ARROW) {
-                doScan();
+            if (key === 's' || key === 'S') {
+                accumulatorLayer.save('gaussian_accumulation_pattern.png');
             }
-        }
-
-        // Helper function to convert a grayscale jsfeat image buffer to a P5.Image (RGBA)
-        function jsfeatToP5(src, dst) {
-            // Create new P5.Image if 'dst' is not provided or has wrong dimensions
-            if (!dst || dst.width !== src.cols || dst.height !== src.rows) {
-                dst = createImage(src.cols, src.rows);
+            if (key === 'c' || key === 'C') {
+                accumulatorLayer.background(0);
+                console.log('Patrón acumulado limpiado.');
             }
-            
-            let n = src.data.length; // Number of pixels in jsfeat buffer
-            dst.loadPixels(); // Load pixels array for manipulation
-            
-            let srcData = src.data; // jsfeat's 8-bit grayscale data
-            let dstData = dst.pixels; // P5.js's RGBA pixel array
-            
-            // Iterate through srcData and populate dstData
-            for (let i = 0, j = 0; i < n; i++) {
-                let cur = srcData[i]; // Grayscale value
-                dstData[j++] = cur; // Red channel
-                dstData[j++] = cur; // Green channel
-                dstData[j++] = cur; // Blue channel
-                dstData[j++] = 255; // Alpha channel (fully opaque)
-            }
-            dst.updatePixels(); // Apply pixel changes to the image
-            return dst;
         }
     </script>
 </body>
