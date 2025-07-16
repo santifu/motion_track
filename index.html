@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P5.js Motion Detection with Gaussian Accumulation</title>
+    <title>From Bits To Atoms - Canny Edge Detection</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="jsfeat.min.js"></script> 
+    
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -14,7 +16,7 @@
             margin: 20px;
             background-color: #f0f0f0;
         }
-        #p5-canvas-container {
+        #fbtaSketch {
             border: 1px solid #ccc;
             margin-bottom: 20px;
             background-color: #fff;
@@ -34,6 +36,16 @@
             flex-direction: column;
             gap: 5px;
         }
+        .control-group label {
+            font-weight: bold;
+        }
+        .control-group span {
+            font-size: 0.9em;
+            color: #555;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
         button {
             padding: 10px 15px;
             background-color: #007bff;
@@ -50,276 +62,184 @@
     </style>
 </head>
 <body>
-    <h1>P5.js Motion Detection with Gaussian Accumulation</h1>
-    <div id="p5-canvas-container"></div>
+    <h1>From Bits To Atoms - Canny Edge Detection</h1>
+    <div id="fbtaSketch"></div>
     <div id="controls">
         <div class="control-group">
-            <label for="thresholdSlider">Motion Detection Threshold:</label>
-            <input type="range" id="thresholdSlider" min="0" max="100" value="20" step="1">
-            <span id="thresholdValue">20</span>
+            <label for="blurSize">Blur Size:</label>
+            <input type="range" id="blurSize" min="0" max="100" value="50">
+            <span id="blurValue">50</span>
         </div>
         <div class="control-group">
-            <label for="gaussianKernelSizeSlider">Gaussian Kernel Size (pixels):</label>
-            <input type="range" id="gaussianKernelSizeSlider" min="5" max="51" value="15" step="2">
-            <span id="gaussianKernelSizeValue">15</span>
+            <label for="lowThreshold">Low Threshold:</label>
+            <input type="range" id="lowThreshold" min="0" max="100" value="20">
+            <span id="lowThreshValue">20</span>
         </div>
         <div class="control-group">
-            <label for="gaussianSigmaSlider">Gaussian Sigma (blur amount):</label>
-            <input type="range" id="gaussianSigmaSlider" min="0.5" max="10" value="4" step="0.5">
-            <span id="gaussianSigmaValue">4</span>
+            <label for="highThreshold">High Threshold:</label>
+            <input type="range" id="highThreshold" min="0" max="100" value="70">
+            <span id="highThreshValue">70</span>
         </div>
-        <div class="control-group">
-            <label for="overlayAlphaSlider">Accumulation Overlay Opacity:</label>
-            <input type="range" id="overlayAlphaSlider" min="0" max="100" value="30" step="1">
-            <span id="overlayAlphaValue">30%</span>
-        </div>
-
-        <div class="control-group">
-            <button id="saveAccumulationBtn">Save Accumulated Pattern (PNG)</button>
-            <button id="clearAccumulationBtn">Clear Accumulated Pattern</button>
-        </div>
+        <button onclick="doScan()">Save Edge Image (PNG)</button>
     </div>
 
     <script>
-        let video;
-        let prevFrame; // To store the previous frame for comparison
-        let accumulatorLayer; // The layer where Gaussian points accumulate
+        // Global variables for P5.js and jsfeat
+        var capture;
+        var buffer; // jsfeat buffer for grayscale image
+        var result; // P5.Image to store jsfeat's output
+        var w = 640, h = 480; // Default dimensions
 
-        // HTML elements references
-        let thresholdSliderHTML;
-        let thresholdValueSpan;
-        let gaussianKernelSizeSliderHTML;
-        let gaussianKernelSizeValueSpan;
-        let gaussianSigmaSliderHTML;
-        let gaussianSigmaValueSpan;
-        let overlayAlphaSliderHTML;
-        let overlayAlphaValueSpan;
-
-        // Gaussian Kernel for accumulation
-        let gaussianAccumulationKernel = [];
-        let currentGaussianKernelSize = 15;
-        let currentGaussianSigma = 4;
-
-        // --- Gaussian Kernel Functions ---
-        function generateGaussianAccumulationKernel(size, sigma) {
-            let kernel = [];
-            let sum = 0;
-            let half = (size - 1) / 2;
-
-            for (let y = 0; y < size; y++) {
-                let row = [];
-                for (let x = 0; x < size; x++) {
-                    let dx = x - half;
-                    let dy = y - half;
-                    let value = Math.exp(-0.5 * (dx * dx + dy * dy) / (sigma * sigma));
-                    row.push(value);
-                    sum += value;
-                }
-                kernel.push(row);
-            }
-
-            // Normalize the kernel
-            for (let y = 0; y < size; y++) {
-                for (let x = 0; x < size; x++) {
-                    kernel[y][x] /= sum;
-                }
-            }
-            return kernel;
-        }
-
-        function addGaussianPointToLayer(layer, kernel, center_x, center_y) {
-            let k_size = kernel.length;
-            let half = Math.floor(k_size / 2);
-
-            layer.loadPixels();
-
-            for (let ky = 0; ky < k_size; ky++) {
-                for (let kx = 0; kx < k_size; kx++) {
-                    let pixelX = center_x + (kx - half);
-                    let pixelY = center_y + (ky - half);
-
-                    if (pixelX >= 0 && pixelX < layer.width && pixelY >= 0 && pixelY < layer.height) {
-                        let index = (pixelX + pixelY * layer.width) * 4; // RGBA
-
-                        let currentVal = layer.pixels[index]; // Use red channel for accumulation
-                        let newValue = currentVal + (kernel[ky][kx] * 100); // Scale by factor (adjust as needed for brightness)
-
-                        layer.pixels[index] = Math.min(255, newValue);
-                        layer.pixels[index + 1] = Math.min(255, newValue);
-                        layer.pixels[index + 2] = Math.min(255, newValue);
-                        layer.pixels[index + 3] = 255; // Keep opaque during accumulation
-                    }
-                }
-            }
-            layer.updatePixels();
-        }
-        // --- End Gaussian Kernel Functions ---
+        // References to HTML slider elements and their value displays
+        let blurSizeSlider, lowThresholdSlider, highThresholdSlider;
+        let blurValueSpan, lowThreshValueSpan, highThreshValueSpan;
 
         function setup() {
-            let canvas = createCanvas(640, 480);
-            canvas.parent('p5-canvas-container');
+            // Adjust dimensions and camera constraints for mobile devices
+            if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+                w = 360;
+                h = 270;
+                var constraints = {
+                    audio: false,
+                    video: {
+                        facingMode: {
+                            exact: "environment" // Prefer back camera on mobile
+                        }
+                    }
+                };
+                capture = createCapture(constraints);
+            } else {
+                capture = createCapture(VIDEO); // Default camera for desktop
+            }
 
-            video = createCapture(VIDEO);
-            video.size(width, height);
-            video.hide();
+            // Create P5.js canvas and attach it to the 'fbtaSketch' div
+            var myCanvas = createCanvas(w, h, SVG); // Use SVG renderer
+            myCanvas.parent("fbtaSketch");
 
-            // Create a graphics buffer to store the previous frame
-            prevFrame = createGraphics(width, height);
-            prevFrame.noSmooth(); // For sharper pixel comparison
+            // Set video size to match canvas and hide the raw video element
+            capture.size(w, h);
+            capture.hide();
 
-            accumulatorLayer = createGraphics(width, height);
-            accumulatorLayer.background(0); // Start with black (no accumulation)
+            // Initialize jsfeat buffer for grayscale processing
+            buffer = new jsfeat.matrix_t(w, h, jsfeat.U8C1_t);
 
-            // Get references to HTML elements
-            thresholdSliderHTML = document.getElementById('thresholdSlider');
-            thresholdValueSpan = document.getElementById('thresholdValue');
-            gaussianKernelSizeSliderHTML = document.getElementById('gaussianKernelSizeSlider');
-            gaussianKernelSizeValueSpan = document.getElementById('gaussianKernelSizeValue');
-            gaussianSigmaSliderHTML = document.getElementById('gaussianSigmaSlider');
-            gaussianSigmaValueSpan = document.getElementById('gaussianSigmaValue');
-            overlayAlphaSliderHTML = document.getElementById('overlayAlphaSlider');
-            overlayAlphaValueSpan = document.getElementById('overlayAlphaValue');
+            // Get references to HTML slider elements and their value displays
+            blurSizeSlider = document.getElementById('blurSize');
+            lowThresholdSlider = document.getElementById('lowThreshold');
+            highThresholdSlider = document.getElementById('highThreshold');
 
-            // Initialize Gaussian accumulation kernel
-            currentGaussianKernelSize = parseInt(gaussianKernelSizeSliderHTML.value);
-            currentGaussianSigma = parseFloat(gaussianSigmaSliderHTML.value);
-            gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
+            blurValueSpan = document.getElementById('blurValue');
+            lowThreshValueSpan = document.getElementById('lowThreshValue');
+            highThreshValueSpan = document.getElementById('highThreshValue');
 
-            // Update span values based on initial slider values
-            thresholdValueSpan.innerText = thresholdSliderHTML.value;
-            gaussianKernelSizeValueSpan.innerText = gaussianKernelSizeSliderHTML.value;
-            gaussianSigmaValueSpan.innerText = gaussianSigmaSliderHTML.value;
-            overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%';
+            // Update displayed values when sliders are moved
+            blurSizeSlider.addEventListener('input', () => blurValueSpan.innerText = blurSizeSlider.value);
+            lowThresholdSlider.addEventListener('input', () => lowThreshValueSpan.innerText = lowThresholdSlider.value);
+            highThresholdSlider.addEventListener('input', () => highThreshValueSpan.innerText = highThresholdSlider.value);
 
-            // Add event listeners for sliders
-            thresholdSliderHTML.addEventListener('input', () => thresholdValueSpan.innerText = thresholdSliderHTML.value);
-            gaussianKernelSizeSliderHTML.addEventListener('input', () => {
-                currentGaussianKernelSize = parseInt(gaussianKernelSizeSliderHTML.value);
-                if (currentGaussianKernelSize % 2 === 0) currentGaussianKernelSize += 1;
-                gaussianKernelSizeSliderHTML.value = currentGaussianKernelSize;
-                gaussianKernelSizeValueSpan.innerText = currentGaussianKernelSize;
-                gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
-            });
-            gaussianSigmaSliderHTML.addEventListener('input', () => {
-                currentGaussianSigma = parseFloat(gaussianSigmaSliderHTML.value);
-                gaussianSigmaValueSpan.innerText = currentGaussianSigma;
-                gaussianAccumulationKernel = generateGaussianAccumulationKernel(currentGaussianKernelSize, currentGaussianSigma);
-            });
-            overlayAlphaSliderHTML.addEventListener('input', () => {
-                overlayAlphaValueSpan.innerText = overlayAlphaSliderHTML.value + '%';
-            });
-
-            // Set up button listeners
-            document.getElementById('saveAccumulationBtn').addEventListener('click', () => {
-                accumulatorLayer.save('gaussian_motion_pattern.png');
-            });
-            document.getElementById('clearAccumulationBtn').addEventListener('click', () => {
-                accumulatorLayer.background(0); // Reset accumulator layer to black
-                console.log('Accumulated pattern cleared.');
-            });
+            // Initial update of slider values
+            blurValueSpan.innerText = blurSizeSlider.value;
+            lowThreshValueSpan.innerText = lowThresholdSlider.value;
+            highThreshValueSpan.innerText = highThresholdSlider.value;
         }
 
         function draw() {
-            // Only proceed if video is loaded and ready
-            if (video.width === 0 || video.height === 0) {
-                return;
-            }
+            // Set stroke for any lines (not directly used for the edge image, but good practice)
+            stroke('red');
+            strokeWeight(2);
 
-            // 1. Display the flipped video
-            push();
-            translate(width, 0); // Move origin to right edge
-            scale(-1, 1);       // Flip horizontally
-            image(video, 0, 0, width, height);
-            pop(); // Restore original drawing state
+            // Load pixels from the video capture
+            capture.loadPixels();
 
-            // 2. Load pixels for current frame
-            video.loadPixels();
-            // Get pixels from the *flipped* video displayed on the main canvas
-            // If you want to compare raw camera input without flip effect on motion detection,
-            // you'd load pixels from the video before flipping it for display.
-            // For simplicity, we'll work with the visually flipped frame.
-            loadPixels(); // Load pixels from the main canvas (where video is drawn)
+            // Only process if video pixels are available
+            if (capture.pixels.length > 0) {
+                // Get slider values and map them to jsfeat's expected ranges
+                let blurSize = parseInt(blurSizeSlider.value);
+                let lowThreshold = parseInt(lowThresholdSlider.value);
+                let highThreshold = parseInt(highThresholdSlider.value);
+                
+                // Map slider values for blur and thresholds
+                // blurSize needs to be an odd integer, and usually positive. 
+                // A value of 0 from slider maps to 1 for jsfeat, max 100 maps to 12 (approx)
+                blurSize = map(blurSize, 0, 100, 1, 12); 
+                // Ensure blurSize is an odd number for jsfeat.gaussian_blur
+                if (blurSize % 2 === 0) blurSize++; 
 
-            let diffThreshold = parseInt(thresholdSliderHTML.value);
+                lowThreshold = map(lowThreshold, 0, 100, 0, 255);
+                highThreshold = map(highThreshold, 0, 100, 0, 255);
 
-            // 3. Compare current frame with previous frame
-            if (prevFrame.pixels.length > 0) { // Ensure prevFrame has data
-                prevFrame.loadPixels();
-                // Iterate through pixels to find differences (motion)
-                // We're iterating over the main canvas's pixels to get the flipped view
-                for (let y = 0; y < height; y++) {
-                    for (let x = 0; x < width; x++) {
-                        let index = (x + y * width) * 4; // RGBA index for current frame
+                // --- jsfeat image processing steps ---
+                // 1. Convert video pixels to grayscale jsfeat buffer
+                jsfeat.imgproc.grayscale(capture.pixels, w, h, buffer);
+                
+                // 2. Apply Gaussian blur
+                jsfeat.imgproc.gaussian_blur(buffer, buffer, blurSize, 0);
+                
+                // 3. Perform Canny edge detection
+                jsfeat.imgproc.canny(buffer, buffer, lowThreshold, highThreshold);
 
-                        let r = pixels[index];
-                        let g = pixels[index + 1];
-                        let b = pixels[index + 2];
-
-                        let prevR = prevFrame.pixels[index];
-                        let prevG = prevFrame.pixels[index + 1];
-                        let prevB = prevFrame.pixels[index + 2];
-
-                        // Calculate difference (Manhattan distance, or sum of absolute differences)
-                        let d = dist(r, g, b, prevR, prevG, prevB); // P5.js dist function
-
-                        if (d > diffThreshold) {
-                            // If difference is significant, it's a "motion point"
-                            // Add a Gaussian point at this location on the accumulator layer
-                            // The (x, y) here are already the "display" coordinates (flipped)
-                            addGaussianPointToLayer(accumulatorLayer, gaussianAccumulationKernel, x, y);
-                        }
+                // Convert jsfeat buffer back to P5.Image
+                result = jsfeatToP5(buffer, result);
+                
+                // Invert the colors of the result image (edges will be black on white, or vice-versa)
+                result.loadPixels();
+                for (let y = 0; y < result.height; y++) {
+                    for (let x = 0; x < result.width; x++) {
+                        const index = (y * result.width + x) * 4; // RGBA pixel index
+                        const r = result.pixels[index + 0];
+                        const g = result.pixels[index + 1];
+                        const b = result.pixels[index + 2];
+                        
+                        // Invert RGB values
+                        result.pixels[index + 0] = 255 - r;
+                        result.pixels[index + 1] = 255 - g;
+                        result.pixels[index + 2] = 255 - b;
+                        // Alpha remains 255
                     }
                 }
+                result.updatePixels(); // Apply pixel changes
+
+                // Display the processed image on the canvas
+                image(result, 0, 0, w, h);
             }
-
-            // 4. Update prevFrame with the current frame's *flipped* pixels for next comparison
-            prevFrame.image(video, 0, 0, width, height); // Draw raw video to prevFrame buffer
-            // To ensure prevFrame stores the *flipped* version for consistent comparison
-            // with the displayed video, we draw it to a temp buffer and then copy pixels.
-            let tempFlipBuffer = createGraphics(width, height);
-            tempFlipBuffer.push();
-            tempFlipBuffer.translate(width, 0);
-            tempFlipBuffer.scale(-1, 1);
-            tempFlipBuffer.image(video, 0, 0);
-            tempFlipBuffer.pop();
-            prevFrame.image(tempFlipBuffer, 0, 0); // Copy the flipped content
-            tempFlipBuffer.remove(); // Dispose of temporary buffer
-
-            // 5. Normalize and Overlay Accumulator Layer
-            accumulatorLayer.loadPixels();
-            let maxAccumulation = 0;
-            for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
-                if (accumulatorLayer.pixels[i] > maxAccumulation) {
-                    maxAccumulation = accumulatorLayer.pixels[i];
-                }
-            }
-
-            if (maxAccumulation > 0) {
-                let overlayAlpha = parseFloat(overlayAlphaSliderHTML.value) / 100; // 0.0 to 1.0
-                for (let i = 0; i < accumulatorLayer.pixels.length; i += 4) {
-                    let normalizedVal = map(accumulatorLayer.pixels[i], 0, maxAccumulation, 0, 255);
-                    accumulatorLayer.pixels[i] = normalizedVal;     // Red
-                    accumulatorLayer.pixels[i+1] = normalizedVal;   // Green
-                    accumulatorLayer.pixels[i+2] = normalizedVal;   // Blue
-                    accumulatorLayer.pixels[i+3] = 255 * overlayAlpha; // Apply transparency
-                }
-            }
-            accumulatorLayer.updatePixels();
-            image(accumulatorLayer, 0, 0); // Overlay the accumulated pattern
-
-            // Release pixels from main canvas after use
-            updatePixels();
         }
 
-        // Optional: Keep keyPressed for alternative input
+        // Function to save the current edge-detected image
+        function doScan() {
+            print("Screenshot!");
+            save(result, 'fbta_' + int(random(1000)) + '_falabbcn.png');
+        }
+
+        // Optional: Keyboard shortcut for saving the image
         function keyPressed() {
-            if (key === 's' || key === 'S') {
-                accumulatorLayer.save('gaussian_motion_pattern.png');
+            if (keyCode === DOWN_ARROW) {
+                doScan();
             }
-            if (key === 'c' || key === 'C') {
-                accumulatorLayer.background(0);
-                console.log('Accumulated pattern cleared.');
+        }
+
+        // Helper function to convert a grayscale jsfeat image buffer to a P5.Image (RGBA)
+        function jsfeatToP5(src, dst) {
+            // Create new P5.Image if 'dst' is not provided or has wrong dimensions
+            if (!dst || dst.width !== src.cols || dst.height !== src.rows) {
+                dst = createImage(src.cols, src.rows);
             }
+            
+            let n = src.data.length; // Number of pixels in jsfeat buffer
+            dst.loadPixels(); // Load pixels array for manipulation
+            
+            let srcData = src.data; // jsfeat's 8-bit grayscale data
+            let dstData = dst.pixels; // P5.js's RGBA pixel array
+            
+            // Iterate through srcData and populate dstData
+            for (let i = 0, j = 0; i < n; i++) {
+                let cur = srcData[i]; // Grayscale value
+                dstData[j++] = cur; // Red channel
+                dstData[j++] = cur; // Green channel
+                dstData[j++] = cur; // Blue channel
+                dstData[j++] = 255; // Alpha channel (fully opaque)
+            }
+            dst.updatePixels(); // Apply pixel changes to the image
+            return dst;
         }
     </script>
 </body>
