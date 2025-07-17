@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detección Dinámica: Pose o Caras</title>
+    <title>Detección Dinámica: Pose o Caras (Móvil Compatible)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
     <script src="https://unpkg.com/ml5@0.6.1/dist/ml5.min.js"></script>
@@ -25,17 +25,25 @@
             border: 1px solid #ccc;
             margin-bottom: 20px;
             background-color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
         }
         #controls {
             background-color: #fff;
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            width: 640px; /* Match canvas width */
+            width: 90%;
+            max-width: 640px;
             display: flex;
             flex-direction: column;
             gap: 15px;
-            align-items: flex-start; /* Align items to the start for labels */
+            align-items: flex-start;
         }
         .control-group {
             display: flex;
@@ -53,12 +61,26 @@
             border-radius: 4px;
             border: 1px solid #ccc;
             width: 100%;
-            max-width: 300px; /* Limit width of dropdown */
             font-size: 16px;
         }
         p#status-message {
             color: #555;
             font-style: italic;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s ease;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button:hover {
+            background-color: #0056b3;
         }
     </style>
 </head>
@@ -73,76 +95,170 @@
                 <option value="face">Detección de Caras (Bounding Box y Puntos Clave)</option>
             </select>
         </div>
+
+        <div class="control-group">
+            <label for="cameraSelect">Selecciona la cámara:</label>
+            <select id="cameraSelect">
+                </select>
+        </div>
+
         <p id="status-message">Cargando modelo...</p>
+
+        <button id="saveCanvasBtn">Guardar Imagen Actual</button>
     </div>
 
     <script>
         let video;
-        let detector; // Can be poseNet or faceapi
-        let currentType = 'pose'; // Default detection type
-        let poses = []; // For pose detection results
-        let faces = []; // For face detection results
-        let statusMessageElem; // To display model loading status
+        let detector; // Puede ser poseNet o faceapi
+        let currentType = 'pose'; // Tipo de detección predeterminado
+        let poses = []; // Para resultados de detección de pose
+        let faces = []; // Para resultados de detección de caras
+        let statusMessageElem; // Para mostrar el estado de carga del modelo
+        let cameraSelectElem; // Referencia al nuevo elemento select de la cámara
+
+        // Variables para el tamaño del canvas, ajustadas para móvil
+        let canvasWidth;
+        let canvasHeight;
 
         function setup() {
-            let canvas = createCanvas(640, 480);
+            // Calcula el tamaño del canvas para adaptarse a la pantalla, con un máximo
+            canvasWidth = Math.min(640, windowWidth * 0.9);
+            canvasHeight = canvasWidth * (480 / 640); // Mantiene la relación de aspecto 4:3
+
+            let canvas = createCanvas(canvasWidth, canvasHeight);
             canvas.parent('p5-canvas-container');
 
-            video = createCapture(VIDEO);
-            video.size(width, height);
-            video.hide();
-
-            statusMessageElem = select('#status-message'); // Get the HTML element for status messages
+            statusMessageElem = select('#status-message');
             let detectionTypeSelect = select('#detectionType');
-            detectionTypeSelect.changed(changeDetectionType); // Add event listener for dropdown change
+            detectionTypeSelect.changed(changeDetectionType);
 
-            // Initial model load
-            loadModel(currentType);
+            cameraSelectElem = select('#cameraSelect'); // Inicializa la referencia al selector de cámara
+            cameraSelectElem.changed(changeCamera); // Escucha cambios en la selección de cámara
+
+            select('#saveCanvasBtn').mousePressed(saveCurrentCanvas); // Asigna el evento al botón de guardar
+
+            // Al inicio, enumera y carga las cámaras disponibles
+            enumerateCameras();
         }
 
-        function loadModel(type) {
-            // It's good practice to clear existing results when switching models
-            poses = [];
-            faces = [];
+        // Función para listar las cámaras disponibles y poblar el selector
+        async function enumerateCameras() {
+            cameraSelectElem.html('<option>Cargando cámaras...</option>'); // Mensaje temporal
+            try {
+                // Importante: Solicitar permisos al inicio. Los navegadores no revelan los nombres de los dispositivos
+                // (device.label) a menos que el usuario ya haya concedido permiso para usar la cámara.
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                if (videoDevices.length > 0) {
+                    cameraSelectElem.html(''); // Limpiar el mensaje de carga
+                    videoDevices.forEach(device => {
+                        let option = createElement('option', device.label || `Cámara ${device.deviceId.substring(0, 8)}...`); // Usa el label o un ID truncado
+                        option.attribute('value', device.deviceId);
+                        cameraSelectElem.child(option);
+                    });
+                    // Iniciar la captura de video con la primera cámara por defecto
+                    startVideo(videoDevices[0].deviceId);
+                    loadModel(currentType); // Cargar el modelo después de iniciar el video
+                } else {
+                    cameraSelectElem.html('<option>No se encontraron cámaras.</option>');
+                    statusMessageElem.html('Error: No se encontraron cámaras de video.');
+                }
+            } catch (err) {
+                console.error("Error al enumerar o acceder a las cámaras: ", err);
+                cameraSelectElem.html('<option>Error al cargar cámaras.</option>');
+                statusMessageElem.html('Error: Acceso a la cámara denegado o falló. Por favor, asegúrate de dar permiso.');
+            }
+        }
+
+        // Función para iniciar o cambiar la cámara de video
+        function startVideo(deviceId) {
+            // Detener el video actual si existe para liberar la cámara
+            if (video && video.elt && video.elt.srcObject) {
+                video.elt.srcObject.getTracks().forEach(track => track.stop());
+                video.remove(); // Elimina el elemento de video de p5.js del DOM
+            }
+
+            const constraints = {
+                video: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined, // Usa el ID de la cámara seleccionada
+                    width: { ideal: canvasWidth }, // Intenta usar las dimensiones del canvas
+                    height: { ideal: canvasHeight }
+                }
+            };
             
-            // Re-initialize detector to avoid potential issues with previous model's state
+            // Crea una nueva captura de video con las restricciones especificadas
+            video = createCapture(constraints, () => {
+                video.size(canvasWidth, canvasHeight); // Asegura que el tamaño del video coincida con el canvas
+                video.hide(); // Oculta el elemento HTML del video, ya que p5.js lo dibuja
+                console.log(`Cámara activa: ${deviceId}`);
+                // Reinicia el detector con la nueva fuente de video si ya había un modelo cargado
+                if (detector) {
+                    loadModel(currentType); 
+                }
+            });
+            // Agrega un manejador de errores al elemento de video subyacente
+            video.elt.onerror = (e) => videoError(e);
+        }
+
+        // Se llama cuando el usuario cambia la cámara en el menú desplegable
+        function changeCamera() {
+            const selectedDeviceId = cameraSelectElem.value();
+            if (selectedDeviceId) {
+                startVideo(selectedDeviceId);
+            }
+        }
+
+        // Función para guardar el frame actual del canvas como imagen
+        function saveCurrentCanvas() {
+            saveCanvas('deteccion_ml5', 'png');
+            console.log("Canvas guardado.");
+        }
+
+        // Función para cargar el modelo de detección (PoseNet o FaceAPI)
+        function loadModel(type) {
+            poses = []; // Limpiar resultados anteriores
+            faces = []; // Limpiar resultados anteriores
+            
             if (detector) {
-                // ml5.js doesn't have a direct 'dispose' or 'stop' for all models,
-                // but re-assigning it will usually handle cleanup implicitly
+                // No hay un método 'stop' universal, pero anular la referencia ayuda con la limpieza
                 detector = null; 
             }
 
-            statusMessageElem.html(`Cargando modelo ${type === 'pose' ? 'de PoseNet' : 'de FaceAPI'}... Esto puede tardar un poco.`);
+            statusMessageElem.html(`Cargando modelo ${type === 'pose' ? 'de PoseNet' : 'de FaceAPI'}... Esto puede tardar un poco, especialmente en móviles.`);
             console.log(`Cargando modelo: ${type}`);
 
             if (type === 'pose') {
+                // `flipHorizontal: true` es para que la imagen se vea como un espejo
                 detector = ml5.poseNet(video, { flipHorizontal: true }, modelReady);
                 detector.on('pose', function(results) {
                     poses = results;
                 });
             } else if (type === 'face') {
-                // IMPORTANT: Set withLandmarks to true to detect facial features
+                // `withLandmarks: true` para detectar puntos clave faciales (cejas, boca, etc.)
+                // `detectionNet: 'tinyFaceDetector'` para mejor rendimiento en móvil
                 const detectionOptions = {
-                    withLandmarks: true, // This is the key change!
+                    withLandmarks: true, 
                     withDescriptors: false,
-                    // Consider 'tinyFaceDetector' for faster but slightly less accurate face bounding boxes,
-                    // especially on lower-end devices or if multiple faces are expected.
-                    // detectionNet: 'tinyFaceDetector', 
+                    detectionNet: 'tinyFaceDetector', // Recomendado para rendimiento en móvil
                 };
                 detector = ml5.faceApi(video, detectionOptions, modelReady);
                 detector.on('detect', function(results) {
                     faces = results;
                 });
             }
-            currentType = type; // Update current type
+            currentType = type; // Actualiza el tipo de detección actual
         }
 
+        // Callback cuando el modelo de ML ha cargado
         function modelReady() {
             statusMessageElem.html(`Modelo ${currentType === 'pose' ? 'de PoseNet' : 'de FaceAPI'} cargado. ¡Listo para detectar!`);
             console.log(`Modelo ${currentType === 'pose' ? 'de PoseNet' : 'de FaceAPI'} cargado.`);
-            // No need to explicitly call detectObjects/detectFaces here, P5.js draw loop handles it
         }
 
+        // Se llama cuando el tipo de detección cambia en el menú desplegable
         function changeDetectionType() {
             const selectedType = select('#detectionType').value();
             if (selectedType !== currentType) {
@@ -150,15 +266,20 @@
             }
         }
 
+        // Bucle de dibujo principal de p5.js
         function draw() {
-            // Push/Pop for flipping the video feed
+            // Guarda el estado de transformación actual
             push();
+            // Mueve el origen al lado derecho del canvas
             translate(width, 0); 
+            // Invierte el canvas horizontalmente para que la cámara se vea como un espejo
             scale(-1, 1);       
+            // Dibuja el feed de video
             image(video, 0, 0, width, height); 
+            // Restaura el estado de transformación original
             pop(); 
 
-            // Draw based on the currently selected detection type
+            // Dibuja los resultados de detección según el tipo seleccionado
             if (currentType === 'pose') {
                 drawSkeleton();
             } else if (currentType === 'face') {
@@ -166,109 +287,107 @@
             }
         }
 
-        // --- Pose Detection Drawing Functions ---
+        // --- Funciones de Dibujo para Detección de Pose ---
         function drawSkeleton() {
             for (let i = 0; i < poses.length; i++) {
                 let pose = poses[i].pose;
                 let skeleton = poses[i].skeleton;
 
-                // Draw keypoints
+                // Dibuja los puntos clave (articulaciones)
                 for (let j = 0; j < pose.keypoints.length; j++) {
                     let keypoint = pose.keypoints[j];
-                    if (keypoint.score > 0.2) {
-                        fill(255, 0, 0); // Red
+                    if (keypoint.score > 0.2) { // Solo dibuja puntos con confianza suficiente
+                        fill(255, 0, 0); // Rojo
                         noStroke();
                         ellipse(keypoint.position.x, keypoint.position.y, 10, 10);
                     }
                 }
 
-                // Draw skeleton connections
+                // Dibuja las conexiones del esqueleto
                 for (let j = 0; j < skeleton.length; j++) {
                     let partA = skeleton[j][0];
                     let partB = skeleton[j][1];
-                    stroke(0, 255, 0); // Green
+                    stroke(0, 255, 0); // Verde
                     strokeWeight(3);
                     line(partA.position.x, partA.position.y, partB.position.x, partB.position.y);
                 }
             }
         }
 
-        // --- Face Detection Drawing Functions ---
+        // --- Funciones de Dibujo para Detección de Caras ---
         function drawFaces() {
             for (let i = 0; i < faces.length; i++) {
                 let face = faces[i];
-                let box = face.alignedRect._box; // Bounding box for the face
+                let box = face.alignedRect._box; // Cuadro delimitador de la cara
 
-                stroke(0, 0, 255); // Blue bounding box
+                stroke(0, 0, 255); // Cuadro azul
                 strokeWeight(2);
                 noFill();
                 rect(box.x, box.y, box.width, box.height);
 
-                // Draw facial landmarks (eyes, nose, mouth, eyebrows, jawline)
+                // Dibuja los puntos clave faciales (ojos, nariz, boca, cejas, mandíbula)
                 drawLandmarks(face.landmarks);
             }
         }
 
-        // Helper function to draw facial landmarks
+        // Función auxiliar para dibujar los puntos clave faciales
         function drawLandmarks(landmarks) {
             noFill();
-            stroke(255, 255, 0); // Yellow for landmarks
+            stroke(255, 255, 0); // Amarillo para los puntos clave
             strokeWeight(2);
 
-            // Jawline
+            // Mandíbula
             beginShape();
-            for (let i = 0; i < landmarks.positions.length; i++) {
-                if (i >= 0 && i <= 16) { // Jawline points
-                    vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
-                }
+            for (let i = 0; i <= 16; i++) { // Puntos de la mandíbula
+                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
             }
             endShape();
 
-            // Eyebrows
+            // Cejas
             for (let i = 17; i <= 26; i++) {
                 ellipse(landmarks.positions[i]._x, landmarks.positions[i]._y, 4, 4);
             }
             
-            // Nose
+            // Nariz
             beginShape();
             for (let i = 27; i <= 35; i++) {
                 vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
             }
             endShape();
 
-            // Eyes
-            // Right eye (your left)
+            // Ojos
+            // Ojo derecho (tu izquierda)
             beginShape();
             for (let i = 36; i <= 41; i++) {
                 vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
             }
             endShape(CLOSE);
 
-            // Left eye (your right)
+            // Ojo izquierdo (tu derecha)
             beginShape();
             for (let i = 42; i <= 47; i++) {
                 vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
             }
             endShape(CLOSE);
 
-            // Mouth
+            // Boca
             beginShape();
             for (let i = 48; i <= 60; i++) {
                 vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
             }
             endShape(CLOSE);
             
-            beginShape(); // Inner mouth contour
+            beginShape(); // Contorno interior de la boca
             for (let i = 61; i <= 67; i++) {
                 vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
             }
             endShape(CLOSE);
         }
 
-
-        // Optional: Error handling for video capture (though P5.js handles some)
+        // Manejador de errores para la captura de video
         function videoError(err) {
-            console.error("Error accessing video stream:", err);
+            console.error("Error al acceder al stream de video:", err);
+            statusMessageElem.html(`Error de cámara: ${err.name || err.message}. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.`);
             alert("No se pudo acceder a la cámara. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.");
         }
     </script>
