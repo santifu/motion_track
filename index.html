@@ -1,99 +1,222 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Detección de Caras con OpenCV.js</title>
-    <script src="opencv.js" async onload="onOpenCvReady();"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detección Dinámica: Pose o Caras</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+    <script src="https://unpkg.com/ml5@0.6.1/dist/ml5.min.js"></script>
+    
     <style>
         body {
+            font-family: Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
+            margin: 20px;
             background-color: #f0f0f0;
         }
-        #videoInput {
-            max-width: 80%;
-            height: auto;
-            border: 1px solid #ccc;
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
         }
-        #canvasOutput {
-            max-width: 80%;
-            height: auto;
+        #p5-canvas-container {
             border: 1px solid #ccc;
-            margin-top: 10px;
+            margin-bottom: 20px;
+            background-color: #fff;
+        }
+        #controls {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 640px; /* Match canvas width */
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: flex-start; /* Align items to the start for labels */
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            width: 100%;
+        }
+        .control-group label {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            width: 100%;
+            max-width: 300px; /* Limit width of dropdown */
+            font-size: 16px;
+        }
+        p#status-message {
+            color: #555;
+            font-style: italic;
         }
     </style>
 </head>
 <body>
-    <h1>Detección de Caras con OpenCV.js</h1>
-    <video id="videoInput" autoplay playsinline></video>
-    <canvas id="canvasOutput"></canvas>
+    <h1>Detección Dinámica: Pose o Caras</h1>
+    <div id="p5-canvas-container"></div>
+    <div id="controls">
+        <div class="control-group">
+            <label for="detectionType">Selecciona el tipo de detección:</label>
+            <select id="detectionType">
+                <option value="pose">Detección de Pose (Esqueleto)</option>
+                <option value="face">Detección de Caras (Bounding Box)</option>
+            </select>
+        </div>
+        <p id="status-message">Cargando modelo...</p>
+    </div>
+
     <script>
-        let video = document.getElementById('videoInput');
-        let canvas = document.getElementById('canvasOutput');
-        let ctx = canvas.getContext('2d');
-        let faceCascade;
-        let utils;
+        let video;
+        let detector; // Can be poseNet or faceapi
+        let currentType = 'pose'; // Default detection type
+        let poses = []; // For pose detection results
+        let faces = []; // For face detection results
+        let statusMessageElem; // To display model loading status
 
-        function onOpenCvReady() {
-            console.log("OpenCV.js is ready.");
-             utils = new Utils('errorMessage');
-            utils.loadOpenCv(() => {
-                faceCascade = new cv.CascadeClassifier();
-                // Utiliza una URL CDN para cargar el archivo haarcascade_frontalface_default.xml
-                utils.createFileFromURL('haarcascade_frontalface_default.xml', 'https://cdn.jsdelivr.net/npm/opencv@4.0.0/data/haarcascades/haarcascade_frontalface_default.xml', () => {
-                    console.log("haarcascade_frontalface_default.xml loaded");
-                    startCamera();
-                });
-            });
+        function setup() {
+            let canvas = createCanvas(640, 480);
+            canvas.parent('p5-canvas-container');
+
+            video = createCapture(VIDEO);
+            video.size(width, height);
+            video.hide();
+
+            statusMessageElem = select('#status-message'); // Get the HTML element for status messages
+            let detectionTypeSelect = select('#detectionType');
+            detectionTypeSelect.changed(changeDetectionType); // Add event listener for dropdown change
+
+            // Initial model load
+            loadModel(currentType);
         }
 
-        function startCamera() {
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
-                .then(function(stream) {
-                    video.srcObject = stream;
-                    video.play();
-                    processVideo();
-                })
-                .catch(function(err) {
-                    console.log("An error occurred! " + err);
-                });
-        }
-
-        function processVideo() {
-            let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-            let dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-            let gray = new cv.Mat();
-
-            function detectFaces() {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-                gray = new cv.Mat();
-                src = utils.createMatFromVideo(video,src);
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                let faces = new cv.RectVector();
-                faceCascade.detectMultiScale(gray, faces, 1.1, 3, 0);
-
-                for (let i = 0; i < faces.size(); ++i) {
-                    let face = faces.get(i);
-                    let point1 = new cv.Point(face.x, face.y);
-                    let point2 = new cv.Point(face.x + face.width, face.y + face.height);
-                    cv.rectangle(dst, point1, point2, [255, 0, 0, 255]);
-                }
-                cv.imshow('canvasOutput', dst);
-                src.delete();
-                dst.delete();
-                gray.delete();
-                faces.delete();
+        function loadModel(type) {
+            // Stop previous detection if running
+            if (detector && detector.on) { // Check if detector is from ml5.js and has an 'on' method
+                 // No direct 'stop' method for ml5.js models, but we can clear event listeners
+                 // and ensure new detection loop is started.
+                 console.log("Reiniciando el detector...");
             }
+            
+            statusMessageElem.html(`Cargando modelo ${type === 'pose' ? 'de PoseNet' : 'de FaceAPI'}...`);
+            console.log(`Cargando modelo: ${type}`);
 
-            (function frameLooper() {
-                window.requestAnimationFrame(frameLooper);
-                detectFaces();
-            })();
+            if (type === 'pose') {
+                detector = ml5.poseNet(video, { flipHorizontal: true }, modelReady);
+                detector.on('pose', function(results) {
+                    poses = results;
+                });
+                // Clear face results when switching to pose
+                faces = []; 
+            } else if (type === 'face') {
+                // ml5.faceApi takes the video and options directly
+                // Using 'SSD Mobilenetv1' for bounding box detection, faster.
+                // Options for FaceAPI: https://github.com/ml5js/ml5-library/blob/main/src/FaceApi/index.js
+                const detectionOptions = {
+                    withLandmarks: false,
+                    withDescriptors: false,
+                    // If you want to use TinyFaceDetector (faster but less accurate on small faces), change:
+                    // detectionNet: 'tinyFaceDetector',
+                    // detectionModel: 'MODEL_URL_FOR_TINYFACEDETECTOR', // Need to load tinyFaceDetector model
+                    // For simple bounding boxes, SSD Mobilenetv1 is good.
+                };
+                detector = ml5.faceApi(video, detectionOptions, modelReady);
+                detector.on('detect', function(results) {
+                    faces = results;
+                });
+                // Clear pose results when switching to face
+                poses = [];
+            }
+            currentType = type; // Update current type
+        }
+
+        function modelReady() {
+            statusMessageElem.html(`Modelo ${currentType === 'pose' ? 'de PoseNet' : 'de FaceAPI'} cargado. ¡Listo para detectar!`);
+            console.log(`Modelo ${currentType === 'pose' ? 'de PoseNet' : 'de FaceAPI'} cargado.`);
+            // No need to explicitly call detectObjects/detectFaces here, P5.js draw loop handles it
+        }
+
+        function changeDetectionType() {
+            const selectedType = select('#detectionType').value();
+            if (selectedType !== currentType) {
+                loadModel(selectedType);
+            }
+        }
+
+        function draw() {
+            // Push/Pop for flipping the video feed
+            push();
+            translate(width, 0); 
+            scale(-1, 1);       
+            image(video, 0, 0, width, height); 
+            pop(); 
+
+            // Draw based on the currently selected detection type
+            if (currentType === 'pose') {
+                drawSkeleton();
+            } else if (currentType === 'face') {
+                drawFaces();
+            }
+        }
+
+        // --- Pose Detection Drawing Functions ---
+        function drawSkeleton() {
+            for (let i = 0; i < poses.length; i++) {
+                let pose = poses[i].pose;
+                let skeleton = poses[i].skeleton;
+
+                // Draw keypoints
+                for (let j = 0; j < pose.keypoints.length; j++) {
+                    let keypoint = pose.keypoints[j];
+                    if (keypoint.score > 0.2) {
+                        fill(255, 0, 0); // Red
+                        noStroke();
+                        ellipse(keypoint.position.x, keypoint.position.y, 10, 10);
+                    }
+                }
+
+                // Draw skeleton connections
+                for (let j = 0; j < skeleton.length; j++) {
+                    let partA = skeleton[j][0];
+                    let partB = skeleton[j][1];
+                    stroke(0, 255, 0); // Green
+                    strokeWeight(3);
+                    line(partA.position.x, partA.position.y, partB.position.x, partB.position.y);
+                }
+            }
+        }
+
+        // --- Face Detection Drawing Functions ---
+        function drawFaces() {
+            for (let i = 0; i < faces.length; i++) {
+                let face = faces[i];
+                let box = face.alignedRect._box; // Bounding box for the face
+
+                stroke(0, 0, 255); // Blue bounding box
+                strokeWeight(2);
+                noFill();
+                rect(box.x, box.y, box.width, box.height);
+
+                // If you wanted to draw landmarks (eyes, nose, mouth),
+                // you would need to set `withLandmarks: true` in detectionOptions
+                // and then draw them from `face.landmarks`.
+            }
+        }
+
+        // Optional: Error handling for video capture (though P5.js handles some)
+        function videoError(err) {
+            console.error("Error accessing video stream:", err);
+            alert("No se pudo acceder a la cámara. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.");
         }
     </script>
 </body>
