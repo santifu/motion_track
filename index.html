@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time Object Tracking</title>
+    <title>Real-time Object Tracking (Video Upload)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script> 
     <script src="https://unpkg.com/ml5@0.6.1/dist/ml5.min.js"></script>
     <style>
@@ -23,46 +23,55 @@
             border: 1px solid #ccc;
             margin-bottom: 20px;
             background-color: #fff;
-            /* Flexbox para centrar el canvas si es más pequeño que el contenedor */
             display: flex;
             justify-content: center;
             align-items: center;
+            min-height: 240px; /* Altura mínima para que se vea el mensaje de carga */
         }
-        /* Hacer el canvas responsive para pantallas móviles */
         canvas {
             max-width: 100%;
             height: auto;
+            display: block; /* Eliminar espacio extra debajo del canvas */
         }
         #controls {
             background-color: #fff;
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            width: 90%; /* Ancho responsivo para móvil */
-            max-width: 640px; /* Ancho máximo para pantallas grandes (como el canvas) */
+            width: 90%; 
+            max-width: 640px; 
             display: flex;
             flex-direction: column;
             gap: 15px;
-            align-items: flex-start; /* Alinear controles al inicio */
+            align-items: flex-start;
         }
         .control-group {
             display: flex;
             flex-direction: column;
             gap: 5px;
-            width: 100%; /* Hacer los grupos de control de ancho completo */
+            width: 100%;
         }
         .control-group label {
             font-weight: bold;
             color: #333;
             margin-bottom: 5px;
         }
-        select, input[type="range"] {
+        input[type="file"] {
             padding: 8px;
             border-radius: 4px;
             border: 1px solid #ccc;
-            width: 100%; /* Ancho completo para selects y sliders */
+            width: 100%;
             font-size: 16px;
-            box-sizing: border-box; /* Incluir padding en el ancho */
+            box-sizing: border-box;
+            background-color: #e9e9e9;
+        }
+        input[type="range"] {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            width: 100%;
+            font-size: 16px;
+            box-sizing: border-box;
         }
         .checkbox-container {
             display: flex;
@@ -80,7 +89,7 @@
             align-items: center;
             gap: 5px;
             margin-right: 10px;
-            font-weight: normal; /* Restablecer el negrita de .control-group label */
+            font-weight: normal;
         }
         button {
             padding: 10px 15px;
@@ -91,29 +100,27 @@
             cursor: pointer;
             font-size: 16px;
             transition: background-color 0.2s ease;
-            width: 100%; /* Ancho completo para los botones */
+            width: 100%;
             box-sizing: border-box;
         }
         button:hover {
             background-color: #0056b3;
         }
-        #status-message { /* Añadido un mensaje de estado para la carga del modelo/cámara */
+        #status-message {
             color: #555;
             font-style: italic;
-            width: 100%; /* Asegurarse de que quepa dentro de los controles */
+            width: 100%;
             text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1>Real-time Object Tracking</h1>
+    <h1>Real-time Object Tracking (Video Upload)</h1>
     <div id="p5-canvas-container"></div>
     <div id="controls">
         <div class="control-group">
-            <label for="cameraSelect">Select Camera:</label>
-            <select id="cameraSelect">
-                <option>Cargando cámaras...</option>
-            </select>
+            <label for="videoUpload">Upload Video File:</label>
+            <input type="file" id="videoUpload" accept="video/mp4,video/webm">
         </div>
 
         <div class="control-group">
@@ -125,11 +132,13 @@
         <div class="control-group">
             <p>Select objects to track:</p>
             <div id="checkboxes-container" class="checkbox-container">
-                <p>Cargando modelo y esperando detecciones...</p>
+                <p>Upload a video to start detection...</p>
             </div>
         </div>
 
-        <p id="status-message">Inicializando...</p> <div class="control-group">
+        <p id="status-message">Waiting for video upload...</p>
+
+        <div class="control-group">
             <button id="saveTrajectoryBtn">Save Trajectory (PNG)</button>
             <button id="clearTrajectoryBtn">Clear Trajectory</button>
         </div>
@@ -137,195 +146,153 @@
 
     <script>
         let objectDetector;
-        let video;
+        let videoElement; // Direct HTML video element
+        let p5Video;      // p5.Video object created from videoElement
         let detections = [];
         let trajectoryLayer;
-        let pointSizeSliderHTML; // Referencia al elemento slider HTML
-        let pointSizeValueSpan;  // Para mostrar el valor actual del slider
-        let selectedLabels = {}; // Para almacenar qué etiquetas están seleccionadas para el seguimiento
-        let labelCheckboxes = {}; // Para almacenar referencias a los elementos input checkbox HTML
-        let checkboxesContainer; // Referencia al div HTML donde se añaden los checkboxes
-        let cameraSelectElem;    // Referencia al nuevo elemento select de la cámara
-        let statusMessageElem;   // Referencia al elemento del mensaje de estado
+        let pointSizeSliderHTML;
+        let pointSizeValueSpan;
+        let selectedLabels = {};
+        let labelCheckboxes = {};
+        let checkboxesContainer;
+        let videoUploadInput; // Reference to the file input element
+        let statusMessageElem;
 
-        // Variables para el tamaño del canvas, ajustadas para móvil
         let canvasWidth;
         let canvasHeight;
 
         function setup() {
-            // Calcula el tamaño del canvas para adaptarse a la pantalla, con un máximo
+            // Calculate canvas size for responsiveness, default if no video yet
             canvasWidth = Math.min(640, windowWidth * 0.9);
-            canvasHeight = canvasWidth * (480 / 640); // Mantiene la relación de aspecto 4:3
+            canvasHeight = canvasWidth * (480 / 640); // Initial 4:3 aspect ratio
 
             let canvas = createCanvas(canvasWidth, canvasHeight);
             canvas.parent('p5-canvas-container');
 
-            // Crear la capa de gráficos separada para dibujar trayectorias (no se borrará en cada frame)
             trajectoryLayer = createGraphics(canvasWidth, canvasHeight);
-            trajectoryLayer.clear(); // Hacerla transparente inicialmente
+            trajectoryLayer.clear();
 
-            // Obtener referencias a los elementos HTML por sus IDs
             pointSizeSliderHTML = document.getElementById('pointSizeSlider');
             pointSizeValueSpan = document.getElementById('pointSizeValue');
             checkboxesContainer = document.getElementById('checkboxes-container');
-            cameraSelectElem = select('#cameraSelect'); // Usar p5.js select para el elemento
-            statusMessageElem = select('#status-message'); // Usar p5.js select para el elemento
+            videoUploadInput = document.getElementById('videoUpload');
+            statusMessageElem = select('#status-message');
 
-            // Actualizar la visualización del tamaño del punto cuando el slider se mueve
             pointSizeSliderHTML.addEventListener('input', () => {
                 pointSizeValueSpan.innerText = pointSizeSliderHTML.value;
             });
-
-            // Configurar listeners de botones
             document.getElementById('saveTrajectoryBtn').addEventListener('click', () => {
-                // Para guardar el canvas completo (video + detecciones + trayectoria)
+                // To save the full canvas (video frame + detections + trajectory)
                 saveCanvas('object_trajectory', 'png'); 
             });
             document.getElementById('clearTrajectoryBtn').addEventListener('click', () => {
                 trajectoryLayer.clear();
-                console.log('Trayectoria borrada.');
+                console.log('Trajectory cleared.');
             });
 
-            // Escuchar cambios en la selección de la cámara
-            cameraSelectElem.changed(changeCamera);
+            // Listen for file selection
+            videoUploadInput.addEventListener('change', handleVideoUpload);
 
-            // Al inicio, enumerar y cargar las cámaras disponibles
-            enumerateCameras();
+            statusMessageElem.html('Cargando modelo COCO-SSD...');
+            // Load the object detection model once at setup
+            objectDetector = ml5.objectDetector('cocossd', modelLoaded);
         }
 
-        // Función para listar las cámaras disponibles y poblar el selector
-        async function enumerateCameras() {
-            statusMessageElem.html('Cargando cámaras...');
-            try {
-                // Importante: Solicitar permisos al inicio. Los navegadores no revelan los nombres de los dispositivos
-                // (device.label) a menos que el usuario ya haya concedido permiso para usar la cámara.
-                await navigator.mediaDevices.getUserMedia({ video: true });
-                
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        function modelLoaded() {
+            statusMessageElem.html('Modelo COCO-SSD cargado. Por favor, sube un archivo de video.');
+            console.log('Model loaded.');
+        }
 
-                if (videoDevices.length > 0) {
-                    cameraSelectElem.html(''); // Limpiar el mensaje de carga
-                    videoDevices.forEach(device => {
-                        let option = createElement('option', device.label || `Cámara ${device.deviceId.substring(0, 8)}...`); // Usa el label o un ID truncado
-                        option.attribute('value', device.deviceId);
-                        cameraSelectElem.child(option);
+        function handleVideoUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                if (file.type.startsWith('video/')) {
+                    statusMessageElem.html('Video seleccionado. Preparando...');
+                    // Create an HTML5 video element
+                    videoElement = document.createElement('video');
+                    videoElement.src = URL.createObjectURL(file);
+                    videoElement.controls = true; // Show video controls
+                    videoElement.loop = true;     // Loop the video
+                    videoElement.muted = true;    // Mute by default for autoplay on some browsers
+
+                    // When video metadata is loaded, get its actual dimensions
+                    videoElement.addEventListener('loadedmetadata', () => {
+                        // Adjust canvas size to match video aspect ratio, capping at max width
+                        canvasWidth = Math.min(640, windowWidth * 0.9);
+                        canvasHeight = canvasWidth * (videoElement.videoHeight / videoElement.videoWidth);
+                        resizeCanvas(canvasWidth, canvasHeight);
+                        trajectoryLayer = createGraphics(canvasWidth, canvasHeight); // Recreate trajectory layer
+                        trajectoryLayer.clear();
+
+                        p5Video = new p5.Video(videoElement); // Create p5.Video from HTML video element
+                        p5Video.size(canvasWidth, canvasHeight);
+                        p5Video.hide(); // Hide the actual HTML video element
+
+                        videoElement.play().then(() => {
+                            statusMessageElem.html('Video reproduciéndose. Iniciando detección...');
+                            detectObjects(); // Start detection once video starts playing
+                        }).catch(error => {
+                            statusMessageElem.html('Error al reproducir el video: ' + error.message);
+                            console.error('Error playing video:', error);
+                        });
                     });
-                    // Iniciar la captura de video con la primera cámara por defecto
-                    startVideo(videoDevices[0].deviceId);
-                    // Cargar el modelo *después* de que la cámara esté lista y el video se esté reproduciendo
+
+                    // Add video element to the DOM (hidden by p5.Video.hide()) if you need to inspect it
+                    // document.body.appendChild(videoElement); 
+
                 } else {
-                    cameraSelectElem.html('<option>No se encontraron cámaras.</option>');
-                    statusMessageElem.html('Error: No se encontraron cámaras de video. Asegúrate de dar permisos.');
+                    statusMessageElem.html('Por favor, selecciona un archivo de video (MP4/WebM).');
+                    alert('Please select a video file (MP4/WebM).');
                 }
-            } catch (err) {
-                console.error("Error al enumerar o acceder a las cámaras: ", err);
-                cameraSelectElem.html('<option>Error al cargar cámaras.</option>');
-                statusMessageElem.html('Error: Acceso a la cámara denegado o falló. Por favor, asegúrate de dar permiso.');
-            }
-        }
-
-        // Función para iniciar o cambiar la cámara de video
-        function startVideo(deviceId) {
-            // Detener el video actual si existe para liberar la cámara
-            if (video && video.elt && video.elt.srcObject) {
-                video.elt.srcObject.getTracks().forEach(track => track.stop());
-                video.remove(); // Elimina el elemento de video de p5.js del DOM
-                console.log('Video anterior detenido.');
-            }
-
-            statusMessageElem.html('Iniciando stream de video...');
-            const constraints = {
-                video: {
-                    deviceId: deviceId ? { exact: deviceId } : undefined, // Usa el ID de la cámara seleccionada
-                    width: { ideal: canvasWidth }, // Intenta usar las dimensiones del canvas
-                    height: { ideal: canvasHeight },
-                    facingMode: (deviceId === 'environment' || deviceId === 'user') ? deviceId : undefined // 'user' para frontal, 'environment' para trasera (experimental con deviceId)
-                }
-            };
-            
-            // Crea una nueva captura de video con las restricciones especificadas
-            video = createCapture(constraints, () => {
-                video.size(canvasWidth, canvasHeight); // Asegura que el tamaño del video coincida con el canvas
-                video.hide(); // Oculta el elemento HTML del video, ya que p5.js lo dibuja
-                console.log(`Cámara activa: ${deviceId}`);
-                statusMessageElem.html('Video iniciado. Cargando modelo de detección...');
-                // Cargar el modelo solo una vez después de que el primer video esté listo
-                if (!objectDetector) { // Solo cargar si no está ya cargado
-                    objectDetector = ml5.objectDetector('cocossd', modelReady);
-                } else {
-                    // Si el modelo ya está cargado, simplemente podemos empezar a detectarlo en el nuevo video.
-                    // Reiniciar la detección en caso de que ya estuviera corriendo con el video anterior.
-                    // `detectObjects` llama a `objectDetector.detect(video, gotResults)` lo que re-asocia el detector al nuevo stream
-                    detectObjects(); 
-                }
-            });
-            // Agrega un manejador de errores al elemento de video subyacente
-            video.elt.onerror = (e) => videoError(e);
-        }
-
-        // Se llama cuando el usuario cambia la cámara en el menú desplegable
-        function changeCamera() {
-            const selectedDeviceId = cameraSelectElem.value();
-            if (selectedDeviceId) {
-                startVideo(selectedDeviceId);
-            }
-        }
-
-        function modelReady() {
-            statusMessageElem.html('Modelo COCO-SSD cargado. ¡Listo para detectar objetos!');
-            console.log('Modelo COCO-SSD cargado.');
-            // Asegúrate de que el video esté cargado antes de iniciar la detección
-            video.elt.addEventListener('loadeddata', () => {
-                console.log('Video listo. Iniciando detección...');
-                detectObjects();
-            }, { once: true }); // Usar { once: true } para que el listener se ejecute solo una vez
-            // Si el video ya está cargado (por ejemplo, después de un cambio de cámara), forzar la detección
-            if (video.elt.readyState >= 2) { // HAVE_CURRENT_DATA or more
-                console.log('Video ya estaba listo. Iniciando detección inmediatamente.');
-                detectObjects();
             }
         }
 
         function detectObjects() {
-            // Verifica que el detector y el video estén listos
-            if (objectDetector && video && video.elt.readyState >= 2) {
-                objectDetector.detect(video, gotResults);
+            if (p5Video && p5Video.elt.readyState >= 2 && objectDetector) { // Check if video is loaded and detector is ready
+                objectDetector.detect(p5Video, gotResults);
             } else {
-                console.log("Detector o video no listos para detectar. Reintentando...");
-                // Podríamos añadir un setTimeout aquí si queremos reintentar con un retraso,
-                // pero `gotResults` ya llama a `detectObjects` en un loop.
+                // If video is not ready or detector not loaded, try again in a bit
+                setTimeout(detectObjects, 100); 
             }
         }
 
         function gotResults(error, results) {
             if (error) {
                 console.error(error);
-                // Si hay un error de detección (no de cámara), podemos seguir intentando
-                detectObjects(); 
+                // Continue trying to detect even if there's a temporary error
+                if (p5Video && p5Video.elt.readyState >= 2) {
+                    detectObjects(); 
+                }
                 return;
             }
-            // Store the latest detection results
             detections = results;
-
-            // Update the list of checkboxes if new object labels are detected
             updateLabelCheckboxes(detections);
-
-            // Call detectObjects again to create a continuous detection loop
-            detectObjects();
+            
+            // Only continue detection if video is still playing
+            if (p5Video && !p5Video.elt.paused) {
+                 detectObjects(); // Loop detection
+            } else {
+                statusMessageElem.html('Video pausado/terminado. Detección detenida.');
+            }
         }
 
         function updateLabelCheckboxes(currentDetections) {
+            // Collect all unique labels from current detections
+            let currentLabels = new Set();
             for (let i = 0; i < currentDetections.length; i++) {
-                let obj = currentDetections[i];
-                // If a label hasn't had a checkbox created yet, create one
-                if (!(obj.label in labelCheckboxes)) {
-                    addLabelCheckbox(obj.label);
-                }
+                currentLabels.add(currentDetections[i].label);
             }
-            // Opcional: Si quieres limpiar checkboxes de objetos que ya no están en escena, 
-            // esto requeriría un mapeo de etiquetas activas y una eliminación de elementos del DOM.
-            // Para mantenerlo simple, solo añadimos.
+
+            // Add new checkboxes for newly detected labels
+            currentLabels.forEach(label => {
+                if (!(label in labelCheckboxes)) {
+                    addLabelCheckbox(label);
+                }
+            });
+
+            // (Optional) Remove checkboxes for labels that are no longer detected
+            // This is more complex as it requires tracking which checkboxes are active and removing them.
+            // For simplicity, we'll keep previously created checkboxes.
         }
 
         function addLabelCheckbox(label) {
@@ -349,88 +316,62 @@
                 selectedLabels[label] = event.target.checked; 
                 console.log(selectedLabels); 
             });
+            checkboxesContainer.innerHTML = ''; // Clear loading message
         }
 
         function draw() {
-            // Asegúrate de que el video esté cargado antes de intentar dibujarlo
-            if (video && video.elt && video.elt.readyState >= 2) {
-                push();
-                translate(width, 0); 
-                scale(-1, 1);       
-                image(video, 0, 0, width, height); 
-                pop(); 
+            // Draw a background before the video, so messages are visible if video isn't loaded
+            background(50); 
+
+            if (p5Video && p5Video.elt.readyState >= 2) {
+                // IMPORTANT: When drawing a pre-loaded video, you usually don't flip it
+                // unless the video itself is recorded in a "mirror" way.
+                // For simplicity, we'll assume the uploaded video doesn't need flipping
+                // or that the flipping logic for live camera is removed for consistency.
+                // If you *want* it mirrored, you'd apply the push/translate/scale.
+                // For now, drawing directly.
+                image(p5Video, 0, 0, width, height); 
             } else {
-                // Muestra un fondo o mensaje si el video no está listo
-                background(50); 
                 fill(255);
                 textAlign(CENTER, CENTER);
                 textSize(20);
-                text('Esperando stream de cámara...', width / 2, height / 2);
+                text('Sube un video para empezar...', width / 2, height / 2);
             }
 
-
-            // Dibujar cuadros delimitadores y etiquetas para todos los objetos detectados
+            // Draw bounding boxes and labels for all detected objects
             for (let i = 0; i < detections.length; i++) {
                 let obj = detections[i];
 
-                stroke(0, 255, 0); // Bounding box verde
+                stroke(0, 255, 0); 
                 strokeWeight(2);
                 noFill();
                 rect(obj.x, obj.y, obj.width, obj.height);
 
                 noStroke();
-                fill(255); // Texto blanco
+                fill(255); 
                 textSize(16);
                 text(obj.label + ' ' + nfc(obj.confidence * 100, 2) + '%', obj.x + 5, obj.y + 15);
 
-                // Dibujar trayectorias solo para las etiquetas seleccionadas
+                // Draw trajectories only for selected labels
                 if (selectedLabels[obj.label]) {
                     let cx = obj.x + obj.width / 2;
                     let cy = obj.y + obj.height / 2;
 
-                    // IMPORTANTE: Para que los puntos de la trayectoria se alineen con el video *volteado*,
-                    // necesitamos transformar su coordenada X también.
-                    // La coordenada para la vista volteada es `width - cx`.
-                    let flippedCx = width - cx;
-
-                    // Obtener el tamaño del punto del valor actual del slider HTML
+                    // For uploaded video, no need to flip X coordinate for trajectory dots
+                    // unless you explicitly flipped the video playback.
                     let pointSize = parseInt(pointSizeSliderHTML.value);
 
                     trajectoryLayer.noStroke();
-                    trajectoryLayer.fill(255, 255, 255, 150); // Puntos blancos, semi-transparentes
-                    trajectoryLayer.ellipse(flippedCx, cy, pointSize, pointSize);
+                    trajectoryLayer.fill(255, 255, 255, 150); 
+                    trajectoryLayer.ellipse(cx, cy, pointSize, pointSize);
                 }
             }
 
-            // Mostrar la capa de trayectoria acumulada encima del feed de video
-            // Esta capa *no* se ve afectada por el `push()/pop()` para el video en vivo,
-            // por lo que necesitamos dibujarla normalmente, con sus coordenadas internas correctamente volteadas.
+            // Display the accumulated trajectory layer on top of the video frame
             image(trajectoryLayer, 0, 0);
         }
 
-        // Manejador de errores para la captura de video
-        function videoError(err) {
-            console.error("Error al acceder al stream de video:", err);
-            statusMessageElem.html(`Error de cámara: ${err.name || err.message}. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.`);
-            alert("No se pudo acceder a la cámara. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.");
-            // Si hay un error, limpiar el detector para evitar que intente procesar un stream inexistente
-            if (objectDetector) {
-                objectDetector.removeListener('detect', gotResults);
-                objectDetector = null;
-            }
-        }
-
-        // Optional: Keep keyPressed for alternative input, though buttons are primary
-        function keyPressed() {
-            if (key === 't' || key === 'T') {
-                saveCanvas('object_trajectory_snapshot', 'png'); // Guarda el canvas completo
-                console.log('Captura de pantalla guardada.');
-            }
-            if (key === 'c' || key === 'C') {
-                trajectoryLayer.clear();
-                console.log('Trayectoria borrada.');
-            }
-        }
+        // No keyPressed needed since actions are via buttons now
     </script>
 </body>
 </html>
