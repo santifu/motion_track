@@ -3,11 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detección Dinámica: Pose o Caras (Móvil Compatible)</title>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+    <title>Real-time Object Tracking</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script> 
     <script src="https://unpkg.com/ml5@0.6.1/dist/ml5.min.js"></script>
-    
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -25,10 +23,12 @@
             border: 1px solid #ccc;
             margin-bottom: 20px;
             background-color: #fff;
+            /* Flexbox para centrar el canvas si es más pequeño que el contenedor */
             display: flex;
             justify-content: center;
             align-items: center;
         }
+        /* Hacer el canvas responsive para pantallas móviles */
         canvas {
             max-width: 100%;
             height: auto;
@@ -38,34 +38,49 @@
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            width: 90%;
-            max-width: 640px;
+            width: 90%; /* Ancho responsivo para móvil */
+            max-width: 640px; /* Ancho máximo para pantallas grandes (como el canvas) */
             display: flex;
             flex-direction: column;
             gap: 15px;
-            align-items: flex-start;
+            align-items: flex-start; /* Alinear controles al inicio */
         }
         .control-group {
             display: flex;
             flex-direction: column;
             gap: 5px;
-            width: 100%;
+            width: 100%; /* Hacer los grupos de control de ancho completo */
         }
         .control-group label {
             font-weight: bold;
             color: #333;
             margin-bottom: 5px;
         }
-        select {
+        select, input[type="range"] {
             padding: 8px;
             border-radius: 4px;
             border: 1px solid #ccc;
-            width: 100%;
+            width: 100%; /* Ancho completo para selects y sliders */
             font-size: 16px;
+            box-sizing: border-box; /* Incluir padding en el ancho */
         }
-        p#status-message {
-            color: #555;
-            font-style: italic;
+        .checkbox-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            padding: 5px 0;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .checkbox-container label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-right: 10px;
+            font-weight: normal; /* Restablecer el negrita de .control-group label */
         }
         button {
             padding: 10px 15px;
@@ -76,45 +91,62 @@
             cursor: pointer;
             font-size: 16px;
             transition: background-color 0.2s ease;
-            width: 100%;
+            width: 100%; /* Ancho completo para los botones */
             box-sizing: border-box;
         }
         button:hover {
             background-color: #0056b3;
         }
+        #status-message { /* Añadido un mensaje de estado para la carga del modelo/cámara */
+            color: #555;
+            font-style: italic;
+            width: 100%; /* Asegurarse de que quepa dentro de los controles */
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-    <h1>Detección Dinámica: Pose o Caras</h1>
+    <h1>Real-time Object Tracking</h1>
     <div id="p5-canvas-container"></div>
     <div id="controls">
         <div class="control-group">
-            <label for="detectionType">Selecciona el tipo de detección:</label>
-            <select id="detectionType">
-                <option value="pose">Detección de Pose (Esqueleto)</option>
-                <option value="face">Detección de Caras (Bounding Box y Puntos Clave)</option>
+            <label for="cameraSelect">Select Camera:</label>
+            <select id="cameraSelect">
+                <option>Cargando cámaras...</option>
             </select>
         </div>
 
         <div class="control-group">
-            <label for="cameraSelect">Selecciona la cámara:</label>
-            <select id="cameraSelect">
-                </select>
+            <label for="pointSizeSlider">Trajectory Point Size:</label>
+            <input type="range" id="pointSizeSlider" min="1" max="60" value="5" step="1">
+            <span id="pointSizeValue">5</span>
         </div>
 
-        <p id="status-message">Cargando modelo...</p>
+        <div class="control-group">
+            <p>Select objects to track:</p>
+            <div id="checkboxes-container" class="checkbox-container">
+                <p>Cargando modelo y esperando detecciones...</p>
+            </div>
+        </div>
 
-        <button id="saveCanvasBtn">Guardar Imagen Actual</button>
+        <p id="status-message">Inicializando...</p> <div class="control-group">
+            <button id="saveTrajectoryBtn">Save Trajectory (PNG)</button>
+            <button id="clearTrajectoryBtn">Clear Trajectory</button>
+        </div>
     </div>
 
     <script>
+        let objectDetector;
         let video;
-        let detector; // Puede ser poseNet o faceapi
-        let currentType = 'pose'; // Tipo de detección predeterminado
-        let poses = []; // Para resultados de detección de pose
-        let faces = []; // Para resultados de detección de caras
-        let statusMessageElem; // Para mostrar el estado de carga del modelo
-        let cameraSelectElem; // Referencia al nuevo elemento select de la cámara
+        let detections = [];
+        let trajectoryLayer;
+        let pointSizeSliderHTML; // Referencia al elemento slider HTML
+        let pointSizeValueSpan;  // Para mostrar el valor actual del slider
+        let selectedLabels = {}; // Para almacenar qué etiquetas están seleccionadas para el seguimiento
+        let labelCheckboxes = {}; // Para almacenar referencias a los elementos input checkbox HTML
+        let checkboxesContainer; // Referencia al div HTML donde se añaden los checkboxes
+        let cameraSelectElem;    // Referencia al nuevo elemento select de la cámara
+        let statusMessageElem;   // Referencia al elemento del mensaje de estado
 
         // Variables para el tamaño del canvas, ajustadas para móvil
         let canvasWidth;
@@ -128,22 +160,42 @@
             let canvas = createCanvas(canvasWidth, canvasHeight);
             canvas.parent('p5-canvas-container');
 
-            statusMessageElem = select('#status-message');
-            let detectionTypeSelect = select('#detectionType');
-            detectionTypeSelect.changed(changeDetectionType);
+            // Crear la capa de gráficos separada para dibujar trayectorias (no se borrará en cada frame)
+            trajectoryLayer = createGraphics(canvasWidth, canvasHeight);
+            trajectoryLayer.clear(); // Hacerla transparente inicialmente
 
-            cameraSelectElem = select('#cameraSelect'); // Inicializa la referencia al selector de cámara
-            cameraSelectElem.changed(changeCamera); // Escucha cambios en la selección de cámara
+            // Obtener referencias a los elementos HTML por sus IDs
+            pointSizeSliderHTML = document.getElementById('pointSizeSlider');
+            pointSizeValueSpan = document.getElementById('pointSizeValue');
+            checkboxesContainer = document.getElementById('checkboxes-container');
+            cameraSelectElem = select('#cameraSelect'); // Usar p5.js select para el elemento
+            statusMessageElem = select('#status-message'); // Usar p5.js select para el elemento
 
-            select('#saveCanvasBtn').mousePressed(saveCurrentCanvas); // Asigna el evento al botón de guardar
+            // Actualizar la visualización del tamaño del punto cuando el slider se mueve
+            pointSizeSliderHTML.addEventListener('input', () => {
+                pointSizeValueSpan.innerText = pointSizeSliderHTML.value;
+            });
 
-            // Al inicio, enumera y carga las cámaras disponibles
+            // Configurar listeners de botones
+            document.getElementById('saveTrajectoryBtn').addEventListener('click', () => {
+                // Para guardar el canvas completo (video + detecciones + trayectoria)
+                saveCanvas('object_trajectory', 'png'); 
+            });
+            document.getElementById('clearTrajectoryBtn').addEventListener('click', () => {
+                trajectoryLayer.clear();
+                console.log('Trayectoria borrada.');
+            });
+
+            // Escuchar cambios en la selección de la cámara
+            cameraSelectElem.changed(changeCamera);
+
+            // Al inicio, enumerar y cargar las cámaras disponibles
             enumerateCameras();
         }
 
         // Función para listar las cámaras disponibles y poblar el selector
         async function enumerateCameras() {
-            cameraSelectElem.html('<option>Cargando cámaras...</option>'); // Mensaje temporal
+            statusMessageElem.html('Cargando cámaras...');
             try {
                 // Importante: Solicitar permisos al inicio. Los navegadores no revelan los nombres de los dispositivos
                 // (device.label) a menos que el usuario ya haya concedido permiso para usar la cámara.
@@ -161,10 +213,10 @@
                     });
                     // Iniciar la captura de video con la primera cámara por defecto
                     startVideo(videoDevices[0].deviceId);
-                    loadModel(currentType); // Cargar el modelo después de iniciar el video
+                    // Cargar el modelo *después* de que la cámara esté lista y el video se esté reproduciendo
                 } else {
                     cameraSelectElem.html('<option>No se encontraron cámaras.</option>');
-                    statusMessageElem.html('Error: No se encontraron cámaras de video.');
+                    statusMessageElem.html('Error: No se encontraron cámaras de video. Asegúrate de dar permisos.');
                 }
             } catch (err) {
                 console.error("Error al enumerar o acceder a las cámaras: ", err);
@@ -179,13 +231,16 @@
             if (video && video.elt && video.elt.srcObject) {
                 video.elt.srcObject.getTracks().forEach(track => track.stop());
                 video.remove(); // Elimina el elemento de video de p5.js del DOM
+                console.log('Video anterior detenido.');
             }
 
+            statusMessageElem.html('Iniciando stream de video...');
             const constraints = {
                 video: {
                     deviceId: deviceId ? { exact: deviceId } : undefined, // Usa el ID de la cámara seleccionada
                     width: { ideal: canvasWidth }, // Intenta usar las dimensiones del canvas
-                    height: { ideal: canvasHeight }
+                    height: { ideal: canvasHeight },
+                    facingMode: (deviceId === 'environment' || deviceId === 'user') ? deviceId : undefined // 'user' para frontal, 'environment' para trasera (experimental con deviceId)
                 }
             };
             
@@ -194,9 +249,15 @@
                 video.size(canvasWidth, canvasHeight); // Asegura que el tamaño del video coincida con el canvas
                 video.hide(); // Oculta el elemento HTML del video, ya que p5.js lo dibuja
                 console.log(`Cámara activa: ${deviceId}`);
-                // Reinicia el detector con la nueva fuente de video si ya había un modelo cargado
-                if (detector) {
-                    loadModel(currentType); 
+                statusMessageElem.html('Video iniciado. Cargando modelo de detección...');
+                // Cargar el modelo solo una vez después de que el primer video esté listo
+                if (!objectDetector) { // Solo cargar si no está ya cargado
+                    objectDetector = ml5.objectDetector('cocossd', modelReady);
+                } else {
+                    // Si el modelo ya está cargado, simplemente podemos empezar a detectarlo en el nuevo video.
+                    // Reiniciar la detección en caso de que ya estuviera corriendo con el video anterior.
+                    // `detectObjects` llama a `objectDetector.detect(video, gotResults)` lo que re-asocia el detector al nuevo stream
+                    detectObjects(); 
                 }
             });
             // Agrega un manejador de errores al elemento de video subyacente
@@ -211,177 +272,140 @@
             }
         }
 
-        // Función para guardar el frame actual del canvas como imagen
-        function saveCurrentCanvas() {
-            saveCanvas('deteccion_ml5', 'png');
-            console.log("Canvas guardado.");
-        }
-
-        // Función para cargar el modelo de detección (PoseNet o FaceAPI)
-        function loadModel(type) {
-            poses = []; // Limpiar resultados anteriores
-            faces = []; // Limpiar resultados anteriores
-            
-            if (detector) {
-                // No hay un método 'stop' universal, pero anular la referencia ayuda con la limpieza
-                detector = null; 
-            }
-
-            statusMessageElem.html(`Cargando modelo ${type === 'pose' ? 'de PoseNet' : 'de FaceAPI'}... Esto puede tardar un poco, especialmente en móviles.`);
-            console.log(`Cargando modelo: ${type}`);
-
-            if (type === 'pose') {
-                // `flipHorizontal: true` es para que la imagen se vea como un espejo
-                detector = ml5.poseNet(video, { flipHorizontal: true }, modelReady);
-                detector.on('pose', function(results) {
-                    poses = results;
-                });
-            } else if (type === 'face') {
-                // `withLandmarks: true` para detectar puntos clave faciales (cejas, boca, etc.)
-                // `detectionNet: 'tinyFaceDetector'` para mejor rendimiento en móvil
-                const detectionOptions = {
-                    withLandmarks: true, 
-                    withDescriptors: false,
-                    detectionNet: 'tinyFaceDetector', // Recomendado para rendimiento en móvil
-                };
-                detector = ml5.faceApi(video, detectionOptions, modelReady);
-                detector.on('detect', function(results) {
-                    faces = results;
-                });
-            }
-            currentType = type; // Actualiza el tipo de detección actual
-        }
-
-        // Callback cuando el modelo de ML ha cargado
         function modelReady() {
-            statusMessageElem.html(`Modelo ${currentType === 'pose' ? 'de PoseNet' : 'de FaceAPI'} cargado. ¡Listo para detectar!`);
-            console.log(`Modelo ${currentType === 'pose' ? 'de PoseNet' : 'de FaceAPI'} cargado.`);
-        }
-
-        // Se llama cuando el tipo de detección cambia en el menú desplegable
-        function changeDetectionType() {
-            const selectedType = select('#detectionType').value();
-            if (selectedType !== currentType) {
-                loadModel(selectedType);
+            statusMessageElem.html('Modelo COCO-SSD cargado. ¡Listo para detectar objetos!');
+            console.log('Modelo COCO-SSD cargado.');
+            // Asegúrate de que el video esté cargado antes de iniciar la detección
+            video.elt.addEventListener('loadeddata', () => {
+                console.log('Video listo. Iniciando detección...');
+                detectObjects();
+            }, { once: true }); // Usar { once: true } para que el listener se ejecute solo una vez
+            // Si el video ya está cargado (por ejemplo, después de un cambio de cámara), forzar la detección
+            if (video.elt.readyState >= 2) { // HAVE_CURRENT_DATA or more
+                console.log('Video ya estaba listo. Iniciando detección inmediatamente.');
+                detectObjects();
             }
         }
 
-        // Bucle de dibujo principal de p5.js
+        function detectObjects() {
+            // Verifica que el detector y el video estén listos
+            if (objectDetector && video && video.elt.readyState >= 2) {
+                objectDetector.detect(video, gotResults);
+            } else {
+                console.log("Detector o video no listos para detectar. Reintentando...");
+                // Podríamos añadir un setTimeout aquí si queremos reintentar con un retraso,
+                // pero `gotResults` ya llama a `detectObjects` en un loop.
+            }
+        }
+
+        function gotResults(error, results) {
+            if (error) {
+                console.error(error);
+                // Si hay un error de detección (no de cámara), podemos seguir intentando
+                detectObjects(); 
+                return;
+            }
+            // Store the latest detection results
+            detections = results;
+
+            // Update the list of checkboxes if new object labels are detected
+            updateLabelCheckboxes(detections);
+
+            // Call detectObjects again to create a continuous detection loop
+            detectObjects();
+        }
+
+        function updateLabelCheckboxes(currentDetections) {
+            for (let i = 0; i < currentDetections.length; i++) {
+                let obj = currentDetections[i];
+                // If a label hasn't had a checkbox created yet, create one
+                if (!(obj.label in labelCheckboxes)) {
+                    addLabelCheckbox(obj.label);
+                }
+            }
+            // Opcional: Si quieres limpiar checkboxes de objetos que ya no están en escena, 
+            // esto requeriría un mapeo de etiquetas activas y una eliminación de elementos del DOM.
+            // Para mantenerlo simple, solo añadimos.
+        }
+
+        function addLabelCheckbox(label) {
+            let labelDiv = document.createElement('label');
+            let checkboxInput = document.createElement('input');
+            checkboxInput.type = 'checkbox';
+            checkboxInput.value = label;
+            checkboxInput.id = 'checkbox-' + label.replace(/\s+/g, '-'); 
+
+            let spanText = document.createElement('span');
+            spanText.innerText = label;
+
+            labelDiv.appendChild(checkboxInput);
+            labelDiv.appendChild(spanText);
+            checkboxesContainer.appendChild(labelDiv); 
+
+            labelCheckboxes[label] = checkboxInput;
+            selectedLabels[label] = false; // Initialize selection state to false
+
+            checkboxInput.addEventListener('change', (event) => {
+                selectedLabels[label] = event.target.checked; 
+                console.log(selectedLabels); 
+            });
+        }
+
         function draw() {
-            // Guarda el estado de transformación actual
-            push();
-            // Mueve el origen al lado derecho del canvas
-            translate(width, 0); 
-            // Invierte el canvas horizontalmente para que la cámara se vea como un espejo
-            scale(-1, 1);       
-            // Dibuja el feed de video
-            image(video, 0, 0, width, height); 
-            // Restaura el estado de transformación original
-            pop(); 
-
-            // Dibuja los resultados de detección según el tipo seleccionado
-            if (currentType === 'pose') {
-                drawSkeleton();
-            } else if (currentType === 'face') {
-                drawFaces();
+            // Asegúrate de que el video esté cargado antes de intentar dibujarlo
+            if (video && video.elt && video.elt.readyState >= 2) {
+                push();
+                translate(width, 0); 
+                scale(-1, 1);       
+                image(video, 0, 0, width, height); 
+                pop(); 
+            } else {
+                // Muestra un fondo o mensaje si el video no está listo
+                background(50); 
+                fill(255);
+                textAlign(CENTER, CENTER);
+                textSize(20);
+                text('Esperando stream de cámara...', width / 2, height / 2);
             }
-        }
 
-        // --- Funciones de Dibujo para Detección de Pose ---
-        function drawSkeleton() {
-            for (let i = 0; i < poses.length; i++) {
-                let pose = poses[i].pose;
-                let skeleton = poses[i].skeleton;
 
-                // Dibuja los puntos clave (articulaciones)
-                for (let j = 0; j < pose.keypoints.length; j++) {
-                    let keypoint = pose.keypoints[j];
-                    if (keypoint.score > 0.2) { // Solo dibuja puntos con confianza suficiente
-                        fill(255, 0, 0); // Rojo
-                        noStroke();
-                        ellipse(keypoint.position.x, keypoint.position.y, 10, 10);
-                    }
-                }
+            // Dibujar cuadros delimitadores y etiquetas para todos los objetos detectados
+            for (let i = 0; i < detections.length; i++) {
+                let obj = detections[i];
 
-                // Dibuja las conexiones del esqueleto
-                for (let j = 0; j < skeleton.length; j++) {
-                    let partA = skeleton[j][0];
-                    let partB = skeleton[j][1];
-                    stroke(0, 255, 0); // Verde
-                    strokeWeight(3);
-                    line(partA.position.x, partA.position.y, partB.position.x, partB.position.y);
-                }
-            }
-        }
-
-        // --- Funciones de Dibujo para Detección de Caras ---
-        function drawFaces() {
-            for (let i = 0; i < faces.length; i++) {
-                let face = faces[i];
-                let box = face.alignedRect._box; // Cuadro delimitador de la cara
-
-                stroke(0, 0, 255); // Cuadro azul
+                stroke(0, 255, 0); // Bounding box verde
                 strokeWeight(2);
                 noFill();
-                rect(box.x, box.y, box.width, box.height);
+                rect(obj.x, obj.y, obj.width, obj.height);
 
-                // Dibuja los puntos clave faciales (ojos, nariz, boca, cejas, mandíbula)
-                drawLandmarks(face.landmarks);
-            }
-        }
+                noStroke();
+                fill(255); // Texto blanco
+                textSize(16);
+                text(obj.label + ' ' + nfc(obj.confidence * 100, 2) + '%', obj.x + 5, obj.y + 15);
 
-        // Función auxiliar para dibujar los puntos clave faciales
-        function drawLandmarks(landmarks) {
-            noFill();
-            stroke(255, 255, 0); // Amarillo para los puntos clave
-            strokeWeight(2);
+                // Dibujar trayectorias solo para las etiquetas seleccionadas
+                if (selectedLabels[obj.label]) {
+                    let cx = obj.x + obj.width / 2;
+                    let cy = obj.y + obj.height / 2;
 
-            // Mandíbula
-            beginShape();
-            for (let i = 0; i <= 16; i++) { // Puntos de la mandíbula
-                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
-            }
-            endShape();
+                    // IMPORTANTE: Para que los puntos de la trayectoria se alineen con el video *volteado*,
+                    // necesitamos transformar su coordenada X también.
+                    // La coordenada para la vista volteada es `width - cx`.
+                    let flippedCx = width - cx;
 
-            // Cejas
-            for (let i = 17; i <= 26; i++) {
-                ellipse(landmarks.positions[i]._x, landmarks.positions[i]._y, 4, 4);
-            }
-            
-            // Nariz
-            beginShape();
-            for (let i = 27; i <= 35; i++) {
-                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
-            }
-            endShape();
+                    // Obtener el tamaño del punto del valor actual del slider HTML
+                    let pointSize = parseInt(pointSizeSliderHTML.value);
 
-            // Ojos
-            // Ojo derecho (tu izquierda)
-            beginShape();
-            for (let i = 36; i <= 41; i++) {
-                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+                    trajectoryLayer.noStroke();
+                    trajectoryLayer.fill(255, 255, 255, 150); // Puntos blancos, semi-transparentes
+                    trajectoryLayer.ellipse(flippedCx, cy, pointSize, pointSize);
+                }
             }
-            endShape(CLOSE);
 
-            // Ojo izquierdo (tu derecha)
-            beginShape();
-            for (let i = 42; i <= 47; i++) {
-                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
-            }
-            endShape(CLOSE);
-
-            // Boca
-            beginShape();
-            for (let i = 48; i <= 60; i++) {
-                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
-            }
-            endShape(CLOSE);
-            
-            beginShape(); // Contorno interior de la boca
-            for (let i = 61; i <= 67; i++) {
-                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
-            }
-            endShape(CLOSE);
+            // Mostrar la capa de trayectoria acumulada encima del feed de video
+            // Esta capa *no* se ve afectada por el `push()/pop()` para el video en vivo,
+            // por lo que necesitamos dibujarla normalmente, con sus coordenadas internas correctamente volteadas.
+            image(trajectoryLayer, 0, 0);
         }
 
         // Manejador de errores para la captura de video
@@ -389,6 +413,23 @@
             console.error("Error al acceder al stream de video:", err);
             statusMessageElem.html(`Error de cámara: ${err.name || err.message}. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.`);
             alert("No se pudo acceder a la cámara. Asegúrate de dar permiso y de que no esté siendo usada por otra aplicación.");
+            // Si hay un error, limpiar el detector para evitar que intente procesar un stream inexistente
+            if (objectDetector) {
+                objectDetector.removeListener('detect', gotResults);
+                objectDetector = null;
+            }
+        }
+
+        // Optional: Keep keyPressed for alternative input, though buttons are primary
+        function keyPressed() {
+            if (key === 't' || key === 'T') {
+                saveCanvas('object_trajectory_snapshot', 'png'); // Guarda el canvas completo
+                console.log('Captura de pantalla guardada.');
+            }
+            if (key === 'c' || key === 'C') {
+                trajectoryLayer.clear();
+                console.log('Trayectoria borrada.');
+            }
         }
     </script>
 </body>
