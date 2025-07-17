@@ -70,7 +70,7 @@
             <label for="detectionType">Selecciona el tipo de detección:</label>
             <select id="detectionType">
                 <option value="pose">Detección de Pose (Esqueleto)</option>
-                <option value="face">Detección de Caras (Bounding Box)</option>
+                <option value="face">Detección de Caras (Bounding Box y Puntos Clave)</option>
             </select>
         </div>
         <p id="status-message">Cargando modelo...</p>
@@ -101,14 +101,18 @@
         }
 
         function loadModel(type) {
-            // Stop previous detection if running
-            if (detector && detector.on) { // Check if detector is from ml5.js and has an 'on' method
-                 // No direct 'stop' method for ml5.js models, but we can clear event listeners
-                 // and ensure new detection loop is started.
-                 console.log("Reiniciando el detector...");
-            }
+            // It's good practice to clear existing results when switching models
+            poses = [];
+            faces = [];
             
-            statusMessageElem.html(`Cargando modelo ${type === 'pose' ? 'de PoseNet' : 'de FaceAPI'}...`);
+            // Re-initialize detector to avoid potential issues with previous model's state
+            if (detector) {
+                // ml5.js doesn't have a direct 'dispose' or 'stop' for all models,
+                // but re-assigning it will usually handle cleanup implicitly
+                detector = null; 
+            }
+
+            statusMessageElem.html(`Cargando modelo ${type === 'pose' ? 'de PoseNet' : 'de FaceAPI'}... Esto puede tardar un poco.`);
             console.log(`Cargando modelo: ${type}`);
 
             if (type === 'pose') {
@@ -116,26 +120,19 @@
                 detector.on('pose', function(results) {
                     poses = results;
                 });
-                // Clear face results when switching to pose
-                faces = []; 
             } else if (type === 'face') {
-                // ml5.faceApi takes the video and options directly
-                // Using 'SSD Mobilenetv1' for bounding box detection, faster.
-                // Options for FaceAPI: https://github.com/ml5js/ml5-library/blob/main/src/FaceApi/index.js
+                // IMPORTANT: Set withLandmarks to true to detect facial features
                 const detectionOptions = {
-                    withLandmarks: false,
+                    withLandmarks: true, // This is the key change!
                     withDescriptors: false,
-                    // If you want to use TinyFaceDetector (faster but less accurate on small faces), change:
-                    // detectionNet: 'tinyFaceDetector',
-                    // detectionModel: 'MODEL_URL_FOR_TINYFACEDETECTOR', // Need to load tinyFaceDetector model
-                    // For simple bounding boxes, SSD Mobilenetv1 is good.
+                    // Consider 'tinyFaceDetector' for faster but slightly less accurate face bounding boxes,
+                    // especially on lower-end devices or if multiple faces are expected.
+                    // detectionNet: 'tinyFaceDetector', 
                 };
                 detector = ml5.faceApi(video, detectionOptions, modelReady);
                 detector.on('detect', function(results) {
                     faces = results;
                 });
-                // Clear pose results when switching to face
-                poses = [];
             }
             currentType = type; // Update current type
         }
@@ -207,11 +204,67 @@
                 noFill();
                 rect(box.x, box.y, box.width, box.height);
 
-                // If you wanted to draw landmarks (eyes, nose, mouth),
-                // you would need to set `withLandmarks: true` in detectionOptions
-                // and then draw them from `face.landmarks`.
+                // Draw facial landmarks (eyes, nose, mouth, eyebrows, jawline)
+                drawLandmarks(face.landmarks);
             }
         }
+
+        // Helper function to draw facial landmarks
+        function drawLandmarks(landmarks) {
+            noFill();
+            stroke(255, 255, 0); // Yellow for landmarks
+            strokeWeight(2);
+
+            // Jawline
+            beginShape();
+            for (let i = 0; i < landmarks.positions.length; i++) {
+                if (i >= 0 && i <= 16) { // Jawline points
+                    vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+                }
+            }
+            endShape();
+
+            // Eyebrows
+            for (let i = 17; i <= 26; i++) {
+                ellipse(landmarks.positions[i]._x, landmarks.positions[i]._y, 4, 4);
+            }
+            
+            // Nose
+            beginShape();
+            for (let i = 27; i <= 35; i++) {
+                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+            }
+            endShape();
+
+            // Eyes
+            // Right eye (your left)
+            beginShape();
+            for (let i = 36; i <= 41; i++) {
+                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+            }
+            endShape(CLOSE);
+
+            // Left eye (your right)
+            beginShape();
+            for (let i = 42; i <= 47; i++) {
+                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+            }
+            endShape(CLOSE);
+
+            // Mouth
+            beginShape();
+            for (let i = 48; i <= 60; i++) {
+                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+            }
+            endShape(CLOSE);
+            
+            beginShape(); // Inner mouth contour
+            for (let i = 61; i <= 67; i++) {
+                vertex(landmarks.positions[i]._x, landmarks.positions[i]._y);
+            }
+            endShape(CLOSE);
+        }
+
 
         // Optional: Error handling for video capture (though P5.js handles some)
         function videoError(err) {
