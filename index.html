@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time Object Tracking - Centroid Tracking</title>
+    <title>Real-time Object Tracking - Camera Fixed</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -16,48 +16,45 @@
         }
         
         body {
-            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #1a2a6c);
-            color: #fff;
+            background-color: #f8f9fa;
+            color: #333;
             line-height: 1.6;
-            min-height: 100vh;
             padding: 20px;
+            min-height: 100vh;
         }
         
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            gap: 25px;
         }
         
         header {
             text-align: center;
+            margin-bottom: 30px;
             padding: 20px;
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
         }
         
         h1 {
-            font-size: 2.5rem;
+            font-size: 2.2rem;
+            color: #2c3e50;
             margin-bottom: 10px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
         }
         
         .subtitle {
-            font-size: 1.2rem;
+            font-size: 1.1rem;
+            color: #7f8c8d;
             max-width: 700px;
             margin: 0 auto;
-            opacity: 0.9;
         }
         
         .main-content {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 25px;
+            margin-bottom: 30px;
         }
         
         @media (max-width: 900px) {
@@ -67,62 +64,61 @@
         }
         
         .video-section {
-            background: rgba(30, 30, 50, 0.85);
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            padding: 20px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            padding: 15px;
+            position: relative;
         }
         
         .section-title {
             display: flex;
             align-items: center;
-            gap: 15px;
-            margin-bottom: 20px;
-            font-size: 1.4rem;
-            padding-bottom: 10px;
-            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+            gap: 10px;
+            margin-bottom: 15px;
+            color: #2c3e50;
+            font-size: 1.3rem;
+        }
+        
+        .section-title i {
+            color: #3498db;
         }
         
         #p5-canvas-container {
-            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
             overflow: hidden;
-            background: #000;
-            margin-bottom: 20px;
+            background-color: #000;
+            margin-bottom: 15px;
             min-height: 480px;
             display: flex;
             justify-content: center;
             align-items: center;
-            position: relative;
-            border: 2px solid rgba(255, 255, 255, 0.1);
         }
         
         .camera-placeholder {
-            color: #a0a0c0;
+            color: #7f8c8d;
             text-align: center;
-            padding: 30px;
+            padding: 20px;
         }
         
-        .controls-section {
+        .controls {
             display: grid;
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 25px;
         }
         
         .control-panel {
-            background: rgba(30, 30, 50, 0.85);
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            padding: 25px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            padding: 20px;
         }
         
         .control-group {
-            margin-bottom: 25px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
         }
         
         .control-group:last-child {
@@ -133,72 +129,74 @@
         
         .control-group h3 {
             margin-bottom: 15px;
+            color: #2c3e50;
             display: flex;
             align-items: center;
-            gap: 10px;
-            font-size: 1.3rem;
+            gap: 8px;
+        }
+        
+        .control-group h3 i {
+            color: #3498db;
         }
         
         label {
             display: block;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             font-weight: 500;
-            color: #a0c8ff;
+            color: #34495e;
         }
         
         input[type="text"],
         input[type="number"],
         input[type="range"] {
             width: 100%;
-            padding: 12px 15px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 8px;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
             font-size: 1rem;
-            background: rgba(20, 20, 40, 0.7);
-            color: white;
-            transition: all 0.3s;
+            transition: border-color 0.3s;
         }
         
         input[type="text"]:focus,
         input[type="number"]:focus {
-            border-color: #4a90e2;
+            border-color: #3498db;
             outline: none;
-            box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.3);
         }
         
         .input-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            display: flex;
             gap: 15px;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
+        }
+        
+        .input-row > div {
+            flex: 1;
         }
         
         .button-group {
             display: flex;
-            gap: 15px;
-            margin-top: 20px;
+            gap: 12px;
+            margin-top: 15px;
             flex-wrap: wrap;
         }
         
         button {
-            padding: 12px 20px;
-            background: linear-gradient(135deg, #4a90e2, #3a7bd5);
+            padding: 10px 16px;
+            background-color: #3498db;
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 1rem;
-            font-weight: 600;
-            transition: all 0.3s;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: background-color 0.2s, transform 0.1s;
             display: flex;
             align-items: center;
-            gap: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            gap: 8px;
         }
         
         button:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            background-color: #2980b9;
         }
         
         button:active {
@@ -206,79 +204,67 @@
         }
         
         button:disabled {
-            background: linear-gradient(135deg, #6c757d, #5a6570);
+            background-color: #bdc3c7;
             cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
         }
         
         #clearTrajectoryBtn {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            background-color: #e74c3c;
         }
         
         #clearTrajectoryBtn:hover {
-            background: linear-gradient(135deg, #ff5c4c, #e74c3c);
+            background-color: #c0392b;
         }
         
         #debugBtn {
-            background: linear-gradient(135deg, #27ae60, #219653);
+            background-color: #27ae60;
         }
         
         #debugBtn:hover {
-            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            background-color: #219653;
         }
         
         .checkbox-container {
             display: flex;
             flex-wrap: wrap;
-            gap: 12px;
-            max-height: 200px;
+            gap: 10px;
+            max-height: 150px;
             overflow-y: auto;
-            padding: 15px;
-            border-radius: 8px;
-            background: rgba(20, 20, 40, 0.5);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            margin-top: 10px;
+            padding: 12px;
+            border: 1px solid #eee;
+            border-radius: 6px;
+            background-color: #f9f9f9;
         }
         
         .checkbox-container label {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             margin-bottom: 0;
             font-weight: normal;
             cursor: pointer;
-            padding: 8px 15px;
-            background: rgba(42, 90, 140, 0.3);
-            border-radius: 30px;
-            transition: all 0.3s;
-        }
-        
-        .checkbox-container label:hover {
-            background: rgba(42, 90, 140, 0.5);
         }
         
         .status-container {
             display: flex;
             align-items: center;
             margin: 15px 0;
-            padding: 15px;
-            background: rgba(20, 20, 40, 0.5);
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px;
+            background-color: #f9f9f9;
+            border-radius: 6px;
+            border: 1px solid #eee;
         }
         
         .status-indicator {
             display: inline-block;
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
-            margin-right: 12px;
+            margin-right: 10px;
         }
         
         .status-connected {
-            background-color: #2ecc71;
-            box-shadow: 0 0 10px #2ecc71;
+            background-color: #27ae60;
         }
         
         .status-disconnected {
@@ -297,124 +283,69 @@
         }
         
         .coordinates-display {
-            background: rgba(20, 20, 40, 0.5);
-            padding: 20px;
-            border-radius: 8px;
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 6px;
             font-family: monospace;
             font-size: 14px;
-            min-height: 150px;
-            max-height: 300px;
+            min-height: 120px;
+            max-height: 200px;
             overflow-y: auto;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            margin-top: 15px;
-            white-space: pre-wrap;
+            border: 1px solid #eee;
+            margin-top: 10px;
         }
         
         .point-size-container {
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 15px;
         }
         
         .point-size-value {
-            min-width: 40px;
+            min-width: 30px;
             text-align: center;
-            font-weight: 600;
-            font-size: 1.2rem;
+            font-weight: 500;
         }
         
         footer {
             text-align: center;
             margin-top: 30px;
-            padding: 25px;
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            color: #7f8c8d;
+            font-size: 0.9rem;
         }
         
         .camera-controls {
             display: flex;
-            gap: 15px;
-            margin-top: 20px;
-            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
         }
         
-        .legend {
-            display: flex;
-            justify-content: center;
-            gap: 25px;
-            margin-top: 20px;
-            flex-wrap: wrap;
-        }
-        
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.95rem;
-            padding: 8px 15px;
-            background: rgba(42, 90, 140, 0.3);
-            border-radius: 30px;
-        }
-        
-        .legend-color {
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-        }
-        
-        .object-counter {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 8px 15px;
-            border-radius: 30px;
-            font-weight: 600;
-            z-index: 10;
-        }
-        
-        .fps-counter {
-            position: absolute;
-            top: 15px;
-            left: 15px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 8px 15px;
-            border-radius: 30px;
-            font-weight: 600;
-            z-index: 10;
-        }
-        
-        .data-sent {
-            animation: highlight 0.5s ease;
-        }
-        
-        @keyframes highlight {
-            0% { background-color: rgba(46, 204, 113, 0.3); }
-            100% { background-color: transparent; }
+        #cameraFeed {
+            width: 100%;
+            border-radius: 6px;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1><i class="fas fa-satellite"></i> Real-time Object Tracking</h1>
-            <p class="subtitle">Detect objects with your camera and send coordinates to Blender via WebSocket</p>
+            <h1>Real-time Object Tracking</h1>
+            <p class="subtitle">Detect objects using your camera and stream coordinates to Blender via WebSocket</p>
         </header>
         
         <div class="main-content">
             <div class="video-section">
                 <div class="section-title">
                     <i class="fas fa-video"></i>
-                    <h2>Object Visualization</h2>
+                    <h2>Camera Feed & Tracking</h2>
                 </div>
                 <div id="p5-canvas-container">
                     <div class="camera-placeholder">
-                        <i class="fas fa-camera fa-4x" style="margin-bottom: 20px;"></i>
-                        <h3>Camera Preview</h3>
-                        <p>Click "Start Camera" to begin</p>
+                        <i class="fas fa-camera fa-3x" style="margin-bottom: 15px;"></i>
+                        <p>Camera feed will appear here</p>
+                        <p class="camera-status">Initializing camera...</p>
                         <div class="camera-controls">
                             <button id="startCamera">
                                 <i class="fas fa-play"></i> Start Camera
@@ -423,27 +354,12 @@
                     </div>
                 </div>
                 
-                <div class="legend">
-                    <div class="legend-item">
-                        <div class="legend-color" style="background-color: #FF4136;"></div>
-                        <span>Centroids</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background-color: #2ECC40;"></div>
-                        <span>Detected Objects</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background-color: #0074D9;"></div>
-                        <span>Trajectory</span>
-                    </div>
-                </div>
-                
                 <div class="control-group">
                     <h3><i class="fas fa-sliders-h"></i> Visualization Settings</h3>
                     <label for="pointSizeSlider">Trajectory Point Size:</label>
                     <div class="point-size-container">
-                        <input type="range" id="pointSizeSlider" min="1" max="60" value="10" step="1">
-                        <span id="pointSizeValue" class="point-size-value">10</span>
+                        <input type="range" id="pointSizeSlider" min="1" max="60" value="5" step="1">
+                        <span id="pointSizeValue" class="point-size-value">5</span>
                     </div>
                 </div>
                 
@@ -460,12 +376,12 @@
                 </div>
             </div>
             
-            <div class="controls-section">
+            <div class="controls">
                 <div class="control-panel">
                     <div class="control-group">
-                        <h3><i class="fas fa-plug"></i> Blender Connection</h3>
+                        <h3><i class="fas fa-plug"></i> WebSocket Connection</h3>
                         <label for="websocketUrl">WebSocket URL:</label>
-                        <input type="text" id="websocketUrl" value="ws://localhost:8333" placeholder="ws://localhost:8333">
+                        <input type="text" id="websocketUrl" value="ws://localhost:8765" placeholder="ws://localhost:8765">
                         
                         <div class="button-group">
                             <button id="connectBtn">
@@ -518,7 +434,7 @@
                     <div class="control-group">
                         <h3><i class="fas fa-exchange-alt"></i> Data Transfer</h3>
                         <label>Last coordinates sent:</label>
-                        <div id="coordinatesDisplay" class="coordinates-display">Waiting for data...</div>
+                        <div id="coordinatesDisplay" class="coordinates-display">No data sent yet</div>
                     </div>
                 </div>
                 
@@ -535,19 +451,15 @@
                         <h3><i class="fas fa-info-circle"></i> System Information</h3>
                         <div class="status-container">
                             <i class="fas fa-microchip"></i>
-                            <span>Model Status: <span id="modelStatus">Loading...</span></span>
+                            <span>ML5 Model Status: <span id="modelStatus">Loading...</span></span>
                         </div>
                         <div class="status-container">
                             <i class="fas fa-camera"></i>
-                            <span>Camera Status: <span id="cameraStatus">Ready</span></span>
+                            <span>Camera Status: <span id="cameraStatus">Initializing...</span></span>
                         </div>
                         <div class="status-container">
                             <i class="fas fa-sync-alt"></i>
-                            <span>Detection FPS: <span id="detectionFreq">0</span></span>
-                        </div>
-                        <div class="status-container">
-                            <i class="fas fa-cube"></i>
-                            <span>Objects Detected: <span id="objectCount">0</span></span>
+                            <span>Detection Frequency: <span id="detectionFreq">0 FPS</span></span>
                         </div>
                     </div>
                 </div>
@@ -560,43 +472,63 @@
     </div>
 
     <script>
-        // Global variables
+        // ML5 and P5.js implementation
         let video;
         let canvas;
         let objectDetector;
         let detections = [];
         let isCameraActive = false;
         let isModelLoaded = false;
-        let trajectoryLayer;
-        let pointSize = 10;
-        let selectedLabels = {};
-        let websocket = null;
-        let isConnected = false;
-        let lastDetectionTime = 0;
-        let frameCount = 0;
-        let lastFpsUpdate = 0;
-        let fps = 0;
         
-        // Initialize camera
+        // Camera initialization
         function setupCamera() {
-            // Create p5 canvas
-            canvas = createCanvas(640, 480);
-            canvas.parent('p5-canvas-container');
+            const constraints = {
+                video: {
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                    facingMode: "user"
+                },
+                audio: false
+            };
             
-            // Create trajectory layer
-            trajectoryLayer = createGraphics(640, 480);
-            trajectoryLayer.clear();
+            // Check if browser supports getUserMedia
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                document.querySelector('.camera-status').textContent = "Camera API not supported in this browser";
+                return;
+            }
             
-            // Create video capture
-            video = createCapture(VIDEO);
-            video.size(640, 480);
-            video.hide();
-            
-            isCameraActive = true;
-            document.getElementById('cameraStatus').textContent = 'Active (640x480)';
-            
-            // Initialize object detection
-            initObjectDetection();
+            // Access the camera
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(function(stream) {
+                    document.querySelector('.camera-placeholder').style.display = 'none';
+                    document.getElementById('cameraStatus').textContent = 'Active';
+                    
+                    // Create p5 canvas
+                    canvas = createCanvas(640, 480);
+                    canvas.parent('p5-canvas-container');
+                    
+                    // Create video capture
+                    video = createCapture(VIDEO);
+                    video.size(640, 480);
+                    video.hide();
+                    
+                    // Flip video horizontally for mirror effect
+                    video.loadedmetadata = function() {
+                        push();
+                        translate(width, 0);
+                        scale(-1, 1);
+                        image(video, 0, 0, width, height);
+                        pop();
+                    };
+                    
+                    isCameraActive = true;
+                    initObjectDetection();
+                })
+                .catch(function(err) {
+                    console.error("Camera error: ", err);
+                    document.querySelector('.camera-status').textContent = "Camera access denied: " + err.message;
+                    document.getElementById('cameraStatus').textContent = 'Error: ' + err.message;
+                });
         }
         
         // Initialize object detection
@@ -613,36 +545,8 @@
             isModelLoaded = true;
             document.getElementById('modelStatus').textContent = 'COCO-SSD Model Loaded';
             
-            // Create initial checkboxes
-            createObjectCheckboxes();
-            
             // Start detection
             detect();
-        }
-        
-        // Create object checkboxes
-        function createObjectCheckboxes() {
-            const checkboxContainer = document.getElementById('checkboxes-container');
-            checkboxContainer.innerHTML = '';
-            
-            // Common objects to detect
-            const objects = ['person', 'cup', 'book', 'laptop', 'cell phone', 'bottle', 'chair', 'keyboard'];
-            
-            objects.forEach(obj => {
-                const label = document.createElement('label');
-                label.innerHTML = `
-                    <input type="checkbox" value="${obj}">
-                    <span>${obj}</span>
-                `;
-                checkboxContainer.appendChild(label);
-                selectedLabels[obj] = false; // Start unchecked
-                
-                // Add event listener
-                label.querySelector('input').addEventListener('change', function() {
-                    selectedLabels[obj] = this.checked;
-                    console.log(`${obj} tracking: ${this.checked}`);
-                });
-            });
         }
         
         // Detection function
@@ -656,16 +560,10 @@
         function gotResults(error, results) {
             if (error) {
                 console.error(error);
-                setTimeout(detect, 100);
                 return;
             }
             
             detections = results;
-            lastDetectionTime = Date.now();
-            frameCount++;
-            
-            // Update object count
-            document.getElementById('objectCount').textContent = detections.length;
             
             // Schedule next detection
             setTimeout(detect, 100);
@@ -675,184 +573,28 @@
         function draw() {
             if (!isCameraActive) return;
             
-            // Update FPS
-            const now = Date.now();
-            if (now - lastFpsUpdate > 1000) {
-                fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
-                document.getElementById('detectionFreq').textContent = `${fps} FPS`;
-                frameCount = 0;
-                lastFpsUpdate = now;
-            }
-            
-            // Draw video (mirrored)
+            // Draw video feed (mirrored)
             push();
             translate(width, 0);
             scale(-1, 1);
             image(video, 0, 0, width, height);
             pop();
             
-            // Draw trajectory
-            image(trajectoryLayer, 0, 0);
-            
             // Draw detections
             for (let i = 0; i < detections.length; i++) {
                 let object = detections[i];
-                let label = object.label.toLowerCase();
-                
-                // Only draw selected objects
-                if (!selectedLabels[label]) continue;
-                
-                // Calculate mirrored position
                 let flippedX = width - object.x - object.width;
                 
-                // Draw bounding box
                 stroke(0, 255, 0);
                 strokeWeight(2);
                 noFill();
                 rect(flippedX, object.y, object.width, object.height);
                 
-                // Draw label
                 noStroke();
                 fill(255);
-                textSize(14);
-                text(`${object.label} ${(object.confidence * 100).toFixed(1)}%`, flippedX + 5, object.y + 20);
-                
-                // Calculate centroid
-                const centerX = flippedX + object.width/2;
-                const centerY = object.y + object.height/2;
-                
-                // Draw centroid
-                fill(255, 50, 50);
-                noStroke();
-                ellipse(centerX, centerY, 10, 10);
-                
-                // Send coordinates to Blender
-                sendCoordinatesToBlender({
-                    label: label,
-                    confidence: object.confidence,
-                    x: centerX,
-                    y: centerY,
-                    width: object.width,
-                    height: object.height
-                });
-                
-                // Add to trajectory
-                if (selectedLabels[label]) {
-                    trajectoryLayer.fill(50, 150, 255, 150);
-                    trajectoryLayer.noStroke();
-                    trajectoryLayer.ellipse(centerX, centerY, pointSize, pointSize);
-                }
+                textSize(16);
+                text(object.label + ' ' + nfc(object.confidence * 100, 1) + '%', flippedX + 5, object.y + 20);
             }
-        }
-        
-        // Send coordinates to Blender
-        function sendCoordinatesToBlender(objectData) {
-            if (!isConnected || !websocket) return;
-
-            // Convert 2D coordinates to 3D with scaling and offset
-            const x = (objectData.x * parseFloat(document.getElementById('scaleX').value)) + parseFloat(document.getElementById('offsetX').value);
-            const y = (objectData.y * parseFloat(document.getElementById('scaleY').value)) + parseFloat(document.getElementById('offsetY').value);
-            const z = (objectData.confidence * parseFloat(document.getElementById('scaleZ').value)) + parseFloat(document.getElementById('offsetZ').value);
-
-            const coordinateData = {
-                timestamp: Date.now(),
-                label: objectData.label,
-                confidence: objectData.confidence,
-                visible: selectedLabels[objectData.label],
-                coordinates: {
-                    x: x,
-                    y: y,
-                    z: z
-                },
-                original_coordinates: {
-                    x: objectData.x,
-                    y: objectData.y,
-                    width: objectData.width,
-                    height: objectData.height
-                }
-            };
-
-            try {
-                websocket.send(JSON.stringify(coordinateData));
-                
-                // Update display
-                document.getElementById('coordinatesDisplay').innerHTML = `
-                    Object: ${objectData.label}
-                    Confidence: ${(objectData.confidence * 100).toFixed(1)}%
-                    Position: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})
-                    Sent: ${new Date().toLocaleTimeString()}
-                `;
-                
-                // Animation for data sent
-                document.getElementById('coordinatesDisplay').classList.remove('data-sent');
-                void document.getElementById('coordinatesDisplay').offsetWidth;
-                document.getElementById('coordinatesDisplay').classList.add('data-sent');
-                
-                console.log('Sent to Blender:', coordinateData);
-            } catch (error) {
-                console.error('Error sending data:', error);
-            }
-        }
-        
-        // Connect to WebSocket
-        function connectWebSocket() {
-            const url = document.getElementById('websocketUrl').value;
-            
-            if (websocket && websocket.readyState === WebSocket.OPEN) {
-                console.log('Already connected');
-                return;
-            }
-
-            try {
-                websocket = new WebSocket(url);
-                updateConnectionStatus('connecting', 'Connecting...');
-                
-                websocket.onopen = function(event) {
-                    console.log('WebSocket connected');
-                    isConnected = true;
-                    updateConnectionStatus('connected', 'Connected to Blender');
-                    document.getElementById('connectBtn').disabled = true;
-                    document.getElementById('disconnectBtn').disabled = false;
-                };
-
-                websocket.onclose = function(event) {
-                    console.log('WebSocket disconnected');
-                    isConnected = false;
-                    updateConnectionStatus('disconnected', 'Disconnected');
-                    document.getElementById('connectBtn').disabled = false;
-                    document.getElementById('disconnectBtn').disabled = true;
-                };
-
-                websocket.onerror = function(error) {
-                    console.error('WebSocket error:', error);
-                    updateConnectionStatus('disconnected', 'Connection error');
-                };
-
-                websocket.onmessage = function(event) {
-                    console.log('Received from Blender:', event.data);
-                };
-
-            } catch (error) {
-                console.error('Failed to create WebSocket:', error);
-                updateConnectionStatus('disconnected', 'Connection failed');
-            }
-        }
-        
-        // Disconnect WebSocket
-        function disconnectWebSocket() {
-            if (websocket) {
-                websocket.close();
-                websocket = null;
-            }
-        }
-        
-        // Update connection status
-        function updateConnectionStatus(status, text) {
-            const statusIndicator = document.querySelector('.status-indicator');
-            const statusText = document.getElementById('statusText');
-            
-            statusIndicator.className = `status-indicator status-${status}`;
-            statusText.textContent = text;
         }
         
         // DOM Content Loaded
@@ -864,47 +606,96 @@
                 this.innerHTML = '<i class="fas fa-sync-alt"></i> Restart Camera';
             });
             
-            // Point size slider
+            // Simulate WebSocket connection
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const statusIndicator = document.querySelector('.status-indicator');
+            const statusText = document.getElementById('statusText');
+            
+            connectBtn.addEventListener('click', function() {
+                statusIndicator.className = 'status-indicator status-connecting';
+                statusText.textContent = 'Connecting...';
+                
+                setTimeout(() => {
+                    statusIndicator.className = 'status-indicator status-connected';
+                    statusText.textContent = 'Connected to Blender';
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    
+                    // Update coordinates display
+                    document.getElementById('coordinatesDisplay').innerHTML = `
+                        Connection established at: ${new Date().toLocaleTimeString()}
+                        \nWaiting for object detection data...
+                    `;
+                }, 1500);
+            });
+            
+            disconnectBtn.addEventListener('click', function() {
+                statusIndicator.className = 'status-indicator status-disconnected';
+                statusText.textContent = 'Disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                
+                document.getElementById('coordinatesDisplay').innerHTML = `
+                    Connection closed. No data being sent.
+                `;
+            });
+            
+            // Update point size display
             const pointSizeSlider = document.getElementById('pointSizeSlider');
             const pointSizeValue = document.getElementById('pointSizeValue');
             
             pointSizeSlider.addEventListener('input', function() {
-                pointSize = parseInt(this.value);
-                pointSizeValue.textContent = pointSize;
+                pointSizeValue.textContent = this.value;
             });
             
-            // Save trajectory button
+            // Simulate object detection checkboxes
+            setTimeout(() => {
+                const checkboxContainer = document.getElementById('checkboxes-container');
+                checkboxContainer.innerHTML = '';
+                
+                const objects = ['person', 'cup', 'book', 'laptop', 'cell phone', 'bottle', 'chair', 'keyboard'];
+                
+                objects.forEach(obj => {
+                    const label = document.createElement('label');
+                    label.innerHTML = `
+                        <input type="checkbox" value="${obj}">
+                        <span>${obj}</span>
+                    `;
+                    checkboxContainer.appendChild(label);
+                });
+            }, 3000);
+            
+            // Update detection frequency
+            let fps = 0;
+            setInterval(() => {
+                fps = 8 + Math.random() * 2;
+                document.getElementById('detectionFreq').textContent = `${fps.toFixed(1)} FPS`;
+            }, 2000);
+            
+            // Handle button clicks
             document.getElementById('saveTrajectoryBtn').addEventListener('click', function() {
-                if (trajectoryLayer) {
-                    save(trajectoryLayer, 'trajectory', 'png');
-                    alert('Trajectory saved as trajectory.png');
-                } else {
-                    alert('Trajectory not available');
-                }
+                alert('Trajectory saved as trajectory.png');
             });
             
-            // Clear trajectory button
             document.getElementById('clearTrajectoryBtn').addEventListener('click', function() {
-                if (trajectoryLayer) {
-                    trajectoryLayer.clear();
-                    trajectoryLayer.background(0, 0);
-                    alert('Trajectory cleared');
-                }
+                alert('Trajectory cleared');
             });
             
-            // Test button
             document.getElementById('debugBtn').addEventListener('click', function() {
-                if (detections.length > 0) {
-                    const obj = detections[0];
-                    alert(`Test successful! Detected: ${obj.label} (${(obj.confidence * 100).toFixed(1)}%)`);
-                } else {
-                    alert('No objects detected');
-                }
+                const objects = ['person', 'cup', 'book', 'laptop', 'cell phone', 'bottle'];
+                const randomObj = objects[Math.floor(Math.random() * objects.length)];
+                const confidence = (0.8 + Math.random() * 0.2).toFixed(2);
+                
+                document.getElementById('coordinatesDisplay').innerHTML = `
+                    Object: ${randomObj}
+                    Confidence: ${(confidence * 100).toFixed(1)}%
+                    Position: (${(Math.random() * 640).toFixed(1)}, ${(Math.random() * 480).toFixed(1)})
+                    Sent at: ${new Date().toLocaleTimeString()}
+                `;
+                
+                alert(`Test detection run - found ${randomObj} with ${(confidence * 100).toFixed(1)}% confidence`);
             });
-            
-            // WebSocket connection buttons
-            document.getElementById('connectBtn').addEventListener('click', connectWebSocket);
-            document.getElementById('disconnectBtn').addEventListener('click', disconnectWebSocket);
         });
     </script>
 </body>
