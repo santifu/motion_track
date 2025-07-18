@@ -1,11 +1,9 @@
 import bpy
-import bmesh
 import json
 import asyncio
 import websockets
 import threading
 from mathutils import Vector
-import time
 
 class ObjectTrackingReceiver:
     def __init__(self):
@@ -13,6 +11,7 @@ class ObjectTrackingReceiver:
         self.is_running = False
         self.websocket_server = None
         self.server_thread = None
+        self.visible_objects = {}
         
     def create_tracking_object(self, label):
         """Crea un objeto en Blender para rastrear las coordenadas"""
@@ -20,6 +19,8 @@ class ObjectTrackingReceiver:
         bpy.ops.mesh.primitive_uv_sphere_add(radius=0.1, location=(0, 0, 0))
         obj = bpy.context.active_object
         obj.name = f"Tracked_{label}"
+        obj.hide_render = True
+        obj.hide_viewport = True
         
         # Crear material de color único para cada tipo de objeto
         mat = bpy.data.materials.new(name=f"Mat_{label}")
@@ -33,6 +34,10 @@ class ObjectTrackingReceiver:
             'dog': (1, 1, 0, 1),         # Amarillo
             'cat': (1, 0, 1, 1),         # Magenta
             'bird': (0, 1, 1, 1),        # Cian
+            'cup': (1, 0.5, 0, 1),       # Naranja
+            'book': (0.5, 0.25, 0, 1),   # Marrón
+            'laptop': (0, 0.5, 0.5, 1),  # Verde azulado
+            'cell phone': (0.8, 0.6, 0.9, 1)  # Lila
         }
         
         color = colors.get(label, (0.5, 0.5, 0.5, 1))  # Gris por defecto
@@ -55,6 +60,8 @@ class ObjectTrackingReceiver:
         bpy.ops.mesh.primitive_cube_add(size=0.05, location=(10, 10, 10))
         particle_obj = bpy.context.active_object
         particle_obj.name = f"Particle_{label}"
+        particle_obj.hide_render = True
+        particle_obj.hide_viewport = True
         psys.settings.render_object = particle_obj
         
         # Seleccionar el objeto principal de nuevo
@@ -66,6 +73,7 @@ class ObjectTrackingReceiver:
         """Actualiza la posición del objeto en Blender"""
         if label not in self.tracking_objects:
             self.tracking_objects[label] = self.create_tracking_object(label)
+            self.visible_objects[label] = False
         
         obj = self.tracking_objects[label]
         obj.location = Vector((x, y, z))
@@ -81,6 +89,22 @@ class ObjectTrackingReceiver:
         
         print(f"Updated {label} at ({x:.3f}, {y:.3f}, {z:.3f}) with confidence {confidence:.3f}")
     
+    def set_object_visibility(self, label, visible):
+        """Controla la visibilidad de un objeto"""
+        if label in self.tracking_objects:
+            obj = self.tracking_objects[label]
+            obj.hide_viewport = not visible
+            obj.hide_render = not visible
+            
+            # Mostrar u ocultar también las partículas
+            particle_name = f"Particle_{label}"
+            if particle_name in bpy.data.objects:
+                bpy.data.objects[particle_name].hide_viewport = not visible
+                bpy.data.objects[particle_name].hide_render = not visible
+            
+            self.visible_objects[label] = visible
+            print(f"{label} visibility set to: {visible}")
+    
     async def handle_websocket_message(self, websocket, path):
         """Maneja los mensajes entrantes del WebSocket"""
         print(f"Client connected: {websocket.remote_address}")
@@ -94,17 +118,24 @@ class ObjectTrackingReceiver:
                     label = data.get('label', 'unknown')
                     confidence = data.get('confidence', 0.0)
                     coords = data.get('coordinates', {})
+                    visible = data.get('visible', True)
                     
                     x = coords.get('x', 0)
                     y = coords.get('y', 0)
                     z = coords.get('z', 0)
                     
-                    # Actualizar el objeto en Blender
-                    # Nota: Esto debe ejecutarse en el hilo principal de Blender
+                    # Actualizar visibilidad
                     bpy.app.timers.register(
-                        lambda: self.update_object_position(label, x, y, z, confidence),
+                        lambda: self.set_object_visibility(label, visible),
                         first_interval=0.0
                     )
+                    
+                    # Actualizar posición solo si es visible
+                    if visible:
+                        bpy.app.timers.register(
+                            lambda: self.update_object_position(label, x, y, z, confidence),
+                            first_interval=0.0
+                        )
                     
                 except json.JSONDecodeError:
                     print(f"Error parsing JSON: {message}")
@@ -116,7 +147,7 @@ class ObjectTrackingReceiver:
         except Exception as e:
             print(f"WebSocket error: {e}")
     
-    def start_server(self, host='localhost', port=8765):
+    def start_server(self, host='localhost', port=8333):
         """Inicia el servidor WebSocket"""
         if self.is_running:
             print("Server is already running")
@@ -162,6 +193,7 @@ class ObjectTrackingReceiver:
             bpy.data.objects.remove(obj)
         
         self.tracking_objects.clear()
+        self.visible_objects.clear()
         print("All tracking objects cleared")
 
 # Crear instancia global del receptor
@@ -175,7 +207,7 @@ class OBJECT_OT_start_tracking(bpy.types.Operator):
     
     def execute(self, context):
         tracker.start_server()
-        self.report({'INFO'}, "Object tracking started on ws://localhost:8765")
+        self.report({'INFO'}, "Object tracking started on ws://localhost:8333")
         return {'FINISHED'}
 
 class OBJECT_OT_stop_tracking(bpy.types.Operator):
@@ -198,6 +230,21 @@ class OBJECT_OT_clear_tracking(bpy.types.Operator):
         self.report({'INFO'}, "All tracking objects cleared")
         return {'FINISHED'}
 
+class OBJECT_OT_toggle_object_visibility(bpy.types.Operator):
+    """Alterna la visibilidad de un objeto específico"""
+    bl_idname = "object.toggle_visibility"
+    bl_label = "Toggle Object Visibility"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    label: bpy.props.StringProperty(name="Label", default="")
+    
+    def execute(self, context):
+        if self.label in tracker.visible_objects:
+            new_visibility = not tracker.visible_objects[self.label]
+            tracker.set_object_visibility(self.label, new_visibility)
+            self.report({'INFO'}, f"Visibility for {self.label} set to {new_visibility}")
+        return {'FINISHED'}
+
 # Panel de interfaz de usuario
 class OBJECT_PT_tracking_panel(bpy.types.Panel):
     """Panel de control para el rastreo de objetos"""
@@ -210,34 +257,70 @@ class OBJECT_PT_tracking_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
-        layout.label(text="WebSocket Object Tracking")
+        # Estado del servidor
+        status_text = "RUNNING" if tracker.is_running else "STOPPED"
+        status_icon = 'PLAY' if tracker.is_running else 'PAUSE'
+        layout.label(text=f"Server Status: {status_text}", icon=status_icon)
+        
         layout.separator()
         
+        # Controles principales
         row = layout.row()
-        row.operator("object.start_tracking", text="Start Tracking")
-        row.operator("object.stop_tracking", text="Stop Tracking")
+        if not tracker.is_running:
+            row.operator("object.start_tracking", text="Start Tracking", icon='PLAY')
+        else:
+            row.operator("object.stop_tracking", text="Stop Tracking", icon='PAUSE')
         
-        layout.separator()
-        layout.operator("object.clear_tracking", text="Clear All Objects")
+        row.operator("object.clear_tracking", text="Clear All", icon='TRASH')
         
+        # Lista de objetos detectados
+        if tracker.tracking_objects:
+            layout.separator()
+            layout.label(text="Detected Objects:", icon='OBJECT_DATA')
+            
+            for label, obj in tracker.tracking_objects.items():
+                box = layout.box()
+                row = box.row()
+                
+                # Nombre y visibilidad
+                visibility = tracker.visible_objects.get(label, False)
+                visibility_icon = 'HIDE_OFF' if visibility else 'HIDE_ON'
+                row.label(text=f"● {label}", icon=visibility_icon)
+                
+                # Botón para alternar visibilidad
+                op = row.operator("object.toggle_visibility", text="Toggle")
+                op.label = label
+                
+                # Información adicional
+                if visibility:
+                    box.label(text=f"Position: ({obj.location.x:.2f}, {obj.location.y:.2f}, {obj.location.z:.2f})")
+                    box.label(text=f"Scale: {obj.scale.x:.2f}")
+        
+        # Instrucciones
         layout.separator()
-        layout.label(text="Instructions:")
+        layout.label(text="Instructions:", icon='INFO')
         layout.label(text="1. Click 'Start Tracking'")
         layout.label(text="2. Open the web app")
-        layout.label(text="3. Connect to ws://localhost:8765")
+        layout.label(text="3. Connect to ws://localhost:8333")
         layout.label(text="4. Select objects to track")
+        layout.label(text="5. Objects will appear when detected")
 
 # Registrar clases
 classes = [
     OBJECT_OT_start_tracking,
     OBJECT_OT_stop_tracking,
     OBJECT_OT_clear_tracking,
+    OBJECT_OT_toggle_object_visibility,
     OBJECT_PT_tracking_panel
 ]
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    
+    # Iniciar automáticamente el servidor
+    tracker.start_server()
+    print("Object tracking system ready! Objects will appear when detected.")
 
 def unregister():
     for cls in classes:
@@ -248,7 +331,3 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-    
-    # Iniciar automáticamente el servidor
-    tracker.start_server()
-    print("Object tracking system ready!")
