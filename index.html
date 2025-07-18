@@ -1,156 +1,115 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Object Tracking & WebSocket</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0"></script>
+  <meta charset="UTF-8" />
+  <title>Object Detection WebSocket</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
   <style>
-    body { font-family: sans-serif; background: #f5f5f5; margin: 0; padding: 0; }
-    canvas { display: block; margin: 0 auto; }
-    #controls {
-      background: #fff; padding: 1em; max-width: 700px; margin: auto;
-      display: flex; flex-wrap: wrap; justify-content: space-between;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .control { margin: 0.5em; }
-    .status-indicator {
-      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-      background: red; margin-right: 6px;
-    }
-    .connected { background: green; }
-    .connecting { background: orange; }
+    body { font-family: Arial; background: #222; color: #eee; text-align: center; }
+    canvas { border: 2px solid #444; margin-top: 10px; }
+    .status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 5px; }
+    .status-connected { background-color: #00c853; }
+    .status-disconnected { background-color: #d32f2f; }
+    .status-connecting { background-color: #ffab00; }
   </style>
 </head>
 <body>
-
-<div id="controls">
-  <div class="control">
-    <label>WebSocket URL</label>
-    <input type="text" id="websocketUrl" value="ws://localhost:8765">
-  </div>
-  <div class="control">
+  <h2>Live Object Detection + WebSocket</h2>
+  <div>
+    <label>WebSocket URL: <input type="text" id="websocketUrl" value="ws://localhost:8765" size="30" /></label>
     <button id="connectBtn">Connect</button>
     <button id="disconnectBtn" disabled>Disconnect</button>
-    <span class="status-indicator" id="statusIcon"></span>
+    <span class="status-indicator status-disconnected" id="statusIndicator"></span>
     <span id="statusText">Disconnected</span>
   </div>
-  <div class="control">
-    <label>Scale X</label>
-    <input type="number" id="scaleX" value="1">
-  </div>
-  <div class="control">
-    <label>Scale Y</label>
-    <input type="number" id="scaleY" value="1">
-  </div>
-  <div class="control">
-    <label>Scale Z</label>
-    <input type="number" id="scaleZ" value="1">
-  </div>
-  <div class="control">
-    <label>Offset X</label>
-    <input type="number" id="offsetX" value="0">
-  </div>
-  <div class="control">
-    <label>Offset Y</label>
-    <input type="number" id="offsetY" value="0">
-  </div>
-  <div class="control">
-    <label>Offset Z</label>
-    <input type="number" id="offsetZ" value="0">
-  </div>
-</div>
 
-<pre id="coordinatesDisplay" style="max-width:700px; margin:auto; background:#222; color:#0f0; padding:1em;"></pre>
+  <video id="video" width="640" height="480" autoplay muted playsinline style="display: none;"></video>
+  <canvas id="canvas" width="640" height="480"></canvas>
 
-<script>
-  let video;
-  let detector;
-  let socket = null;
+  <h4>Coordinates sent:</h4>
+  <pre id="coordinatesDisplay">None</pre>
 
-  async function setup() {
-    createCanvas(640, 480).parent(document.body);
-    video = createCapture(VIDEO);
-    video.size(width, height);
-    video.hide();
-    detector = await cocoSsd.load();
-  }
-
-  function draw() {
-    image(video, 0, 0);
-    if (detector) {
-      detector.detect(video.elt).then(detections => {
-        detections.forEach(obj => {
-          if (obj.score > 0.5) {
-            const cx = obj.bbox[0] + obj.bbox[2] / 2;
-            const cy = obj.bbox[1] + obj.bbox[3] / 2;
-
-            fill(255, 0, 0);
-            noStroke();
-            ellipse(cx, cy, 10);
-
-            const scaleX = parseFloat(document.getElementById('scaleX').value);
-            const scaleY = parseFloat(document.getElementById('scaleY').value);
-            const scaleZ = parseFloat(document.getElementById('scaleZ').value);
-            const offsetX = parseFloat(document.getElementById('offsetX').value);
-            const offsetY = parseFloat(document.getElementById('offsetY').value);
-            const offsetZ = parseFloat(document.getElementById('offsetZ').value);
-
-            const point = {
-              label: obj.class,
-              confidence: obj.score,
-              x: cx * scaleX + offsetX,
-              y: cy * scaleY + offsetY,
-              z: 0 * scaleZ + offsetZ
-            };
-
-            if (socket && socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify(point));
-            }
-
-            document.getElementById('coordinatesDisplay').textContent =
-              JSON.stringify(point, null, 2);
-          }
-        });
-      });
-    }
-  }
-
-  document.getElementById('connectBtn').addEventListener('click', () => {
-    const url = document.getElementById('websocketUrl').value;
-    socket = new WebSocket(url);
-    const statusIcon = document.getElementById('statusIcon');
+  <script>
+    let model, ctx, video, canvas, socket = null;
+    const statusIndicator = document.getElementById('statusIndicator');
     const statusText = document.getElementById('statusText');
 
-    statusIcon.className = 'status-indicator connecting';
-    statusText.textContent = 'Connecting...';
+    async function setup() {
+      video = document.getElementById('video');
+      canvas = document.getElementById('canvas');
+      ctx = canvas.getContext('2d');
 
-    socket.onopen = () => {
-      statusIcon.className = 'status-indicator connected';
-      statusText.textContent = 'Connected';
-      document.getElementById('connectBtn').disabled = true;
-      document.getElementById('disconnectBtn').disabled = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+
+      model = await cocoSsd.load();
+      detectFrame();
+    }
+
+    async function detectFrame() {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const predictions = await model.detect(video);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      predictions.forEach(pred => {
+        const [x, y, w, h] = pred.bbox;
+        ctx.strokeStyle = "#00ff00";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = "#00ff00";
+        ctx.font = "16px sans-serif";
+        ctx.fillText(`${pred.class} (${(pred.score * 100).toFixed(1)}%)`, x, y > 20 ? y - 5 : y + 15);
+
+        // send WebSocket message
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          const centerX = x + w / 2;
+          const centerY = y + h / 2;
+          const data = {
+            label: pred.class,
+            confidence: pred.score,
+            x: centerX / canvas.width,
+            y: centerY / canvas.height,
+            z: 0
+          };
+          socket.send(JSON.stringify(data));
+          document.getElementById('coordinatesDisplay').textContent = JSON.stringify(data, null, 2);
+        }
+      });
+
+      requestAnimationFrame(detectFrame);
+    }
+
+    document.getElementById('connectBtn').onclick = () => {
+      const url = document.getElementById('websocketUrl').value;
+      socket = new WebSocket(url);
+      statusIndicator.className = 'status-indicator status-connecting';
+      statusText.textContent = 'Connecting...';
+
+      socket.onopen = () => {
+        statusIndicator.className = 'status-indicator status-connected';
+        statusText.textContent = 'Connected';
+        document.getElementById('connectBtn').disabled = true;
+        document.getElementById('disconnectBtn').disabled = false;
+      };
+      socket.onclose = () => {
+        statusIndicator.className = 'status-indicator status-disconnected';
+        statusText.textContent = 'Disconnected';
+        document.getElementById('connectBtn').disabled = false;
+        document.getElementById('disconnectBtn').disabled = true;
+      };
+      socket.onerror = err => {
+        console.error("WebSocket error:", err);
+      };
     };
 
-    socket.onclose = () => {
-      statusIcon.className = 'status-indicator';
-      statusText.textContent = 'Disconnected';
-      document.getElementById('connectBtn').disabled = false;
-      document.getElementById('disconnectBtn').disabled = true;
+    document.getElementById('disconnectBtn').onclick = () => {
+      if (socket) socket.close();
     };
 
-    socket.onerror = (err) => {
-      console.error('WebSocket error:', err);
-      statusIcon.className = 'status-indicator';
-      statusText.textContent = 'Error';
-    };
-  });
-
-  document.getElementById('disconnectBtn').addEventListener('click', () => {
-    if (socket) socket.close();
-  });
-</script>
-
+    setup();
+  </script>
 </body>
 </html>
