@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time Object Tracking - Camera Fixed</title>
+    <title>Real-time Object Tracking - Centroid Fixed</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -326,13 +326,34 @@
             border-radius: 6px;
             display: none;
         }
+        
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.9rem;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Real-time Object Tracking</h1>
-            <p class="subtitle">Detect objects using your camera and stream coordinates to Blender via WebSocket</p>
+            <p class="subtitle">Detect objects using your camera and track their centroids</p>
         </header>
         
         <div class="main-content">
@@ -345,7 +366,7 @@
                     <div class="camera-placeholder">
                         <i class="fas fa-camera fa-3x" style="margin-bottom: 15px;"></i>
                         <p>Camera feed will appear here</p>
-                        <p class="camera-status">Initializing camera...</p>
+                        <p class="camera-status">Click "Start Camera" to begin</p>
                         <div class="camera-controls">
                             <button id="startCamera">
                                 <i class="fas fa-play"></i> Start Camera
@@ -354,12 +375,27 @@
                     </div>
                 </div>
                 
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #FF4136;"></div>
+                        <span>Centroids</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #2ECC40;"></div>
+                        <span>Detected Objects</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #0074D9;"></div>
+                        <span>Trajectory Path</span>
+                    </div>
+                </div>
+                
                 <div class="control-group">
                     <h3><i class="fas fa-sliders-h"></i> Visualization Settings</h3>
                     <label for="pointSizeSlider">Trajectory Point Size:</label>
                     <div class="point-size-container">
-                        <input type="range" id="pointSizeSlider" min="1" max="60" value="5" step="1">
-                        <span id="pointSizeValue" class="point-size-value">5</span>
+                        <input type="range" id="pointSizeSlider" min="1" max="60" value="10" step="1">
+                        <span id="pointSizeValue" class="point-size-value">10</span>
                     </div>
                 </div>
                 
@@ -455,7 +491,7 @@
                         </div>
                         <div class="status-container">
                             <i class="fas fa-camera"></i>
-                            <span>Camera Status: <span id="cameraStatus">Initializing...</span></span>
+                            <span>Camera Status: <span id="cameraStatus">Ready to start</span></span>
                         </div>
                         <div class="status-container">
                             <i class="fas fa-sync-alt"></i>
@@ -479,6 +515,10 @@
         let detections = [];
         let isCameraActive = false;
         let isModelLoaded = false;
+        let trajectoryLayer;
+        let pointSize = 10;
+        let selectedObjects = {};
+        let lastDetectionTime = 0;
         
         // Camera initialization
         function setupCamera() {
@@ -507,19 +547,14 @@
                     canvas = createCanvas(640, 480);
                     canvas.parent('p5-canvas-container');
                     
+                    // Create trajectory layer
+                    trajectoryLayer = createGraphics(640, 480);
+                    trajectoryLayer.clear();
+                    
                     // Create video capture
                     video = createCapture(VIDEO);
                     video.size(640, 480);
                     video.hide();
-                    
-                    // Flip video horizontally for mirror effect
-                    video.loadedmetadata = function() {
-                        push();
-                        translate(width, 0);
-                        scale(-1, 1);
-                        image(video, 0, 0, width, height);
-                        pop();
-                    };
                     
                     isCameraActive = true;
                     initObjectDetection();
@@ -545,8 +580,35 @@
             isModelLoaded = true;
             document.getElementById('modelStatus').textContent = 'COCO-SSD Model Loaded';
             
+            // Create initial checkboxes
+            createObjectCheckboxes();
+            
             // Start detection
             detect();
+        }
+        
+        // Create object checkboxes
+        function createObjectCheckboxes() {
+            const checkboxContainer = document.getElementById('checkboxes-container');
+            checkboxContainer.innerHTML = '';
+            
+            // Common objects to detect
+            const objects = ['person', 'cup', 'book', 'laptop', 'cell phone', 'bottle', 'chair', 'keyboard'];
+            
+            objects.forEach(obj => {
+                const label = document.createElement('label');
+                label.innerHTML = `
+                    <input type="checkbox" value="${obj}" checked>
+                    <span>${obj}</span>
+                `;
+                checkboxContainer.appendChild(label);
+                selectedObjects[obj] = true;
+                
+                // Add event listener
+                label.querySelector('input').addEventListener('change', function() {
+                    selectedObjects[obj] = this.checked;
+                });
+            });
         }
         
         // Detection function
@@ -560,10 +622,12 @@
         function gotResults(error, results) {
             if (error) {
                 console.error(error);
+                setTimeout(detect, 100);
                 return;
             }
             
             detections = results;
+            lastDetectionTime = Date.now();
             
             // Schedule next detection
             setTimeout(detect, 100);
@@ -573,6 +637,9 @@
         function draw() {
             if (!isCameraActive) return;
             
+            // Clear canvas
+            clear();
+            
             // Draw video feed (mirrored)
             push();
             translate(width, 0);
@@ -580,21 +647,52 @@
             image(video, 0, 0, width, height);
             pop();
             
+            // Draw trajectory
+            image(trajectoryLayer, 0, 0);
+            
             // Draw detections
             for (let i = 0; i < detections.length; i++) {
                 let object = detections[i];
+                
+                // Only draw selected objects
+                if (!selectedObjects[object.label]) continue;
+                
+                // Calculate mirrored position
                 let flippedX = width - object.x - object.width;
                 
+                // Draw bounding box
                 stroke(0, 255, 0);
                 strokeWeight(2);
                 noFill();
                 rect(flippedX, object.y, object.width, object.height);
                 
+                // Draw label
                 noStroke();
                 fill(255);
-                textSize(16);
-                text(object.label + ' ' + nfc(object.confidence * 100, 1) + '%', flippedX + 5, object.y + 20);
+                textSize(14);
+                text(`${object.label} ${(object.confidence * 100).toFixed(1)}%`, flippedX + 5, object.y + 20);
+                
+                // Calculate centroid
+                const centerX = flippedX + object.width/2;
+                const centerY = object.y + object.height/2;
+                
+                // Draw centroid
+                fill(255, 50, 50);
+                noStroke();
+                ellipse(centerX, centerY, 10, 10);
+                
+                // Add to trajectory
+                if (selectedObjects[object.label]) {
+                    trajectoryLayer.fill(50, 150, 255, 150);
+                    trajectoryLayer.noStroke();
+                    trajectoryLayer.ellipse(centerX, centerY, pointSize, pointSize);
+                }
             }
+            
+            // Update FPS display
+            const elapsed = Date.now() - lastDetectionTime;
+            const fps = elapsed > 0 ? (1000 / elapsed).toFixed(1) : 0;
+            document.getElementById('detectionFreq').textContent = `${fps} FPS`;
         }
         
         // DOM Content Loaded
@@ -604,6 +702,50 @@
                 setupCamera();
                 this.disabled = true;
                 this.innerHTML = '<i class="fas fa-sync-alt"></i> Restart Camera';
+            });
+            
+            // Point size slider
+            const pointSizeSlider = document.getElementById('pointSizeSlider');
+            const pointSizeValue = document.getElementById('pointSizeValue');
+            
+            pointSizeSlider.addEventListener('input', function() {
+                pointSize = parseInt(this.value);
+                pointSizeValue.textContent = pointSize;
+            });
+            
+            // Save trajectory button
+            document.getElementById('saveTrajectoryBtn').addEventListener('click', function() {
+                if (trajectoryLayer) {
+                    trajectoryLayer.save('trajectory', 'png');
+                    alert('Trajectory saved as trajectory.png');
+                } else {
+                    alert('Trajectory not available yet');
+                }
+            });
+            
+            // Clear trajectory button
+            document.getElementById('clearTrajectoryBtn').addEventListener('click', function() {
+                if (trajectoryLayer) {
+                    trajectoryLayer.clear();
+                    trajectoryLayer.background(0, 0);
+                    alert('Trajectory cleared');
+                }
+            });
+            
+            // Debug button
+            document.getElementById('debugBtn').addEventListener('click', function() {
+                if (detections.length > 0) {
+                    const obj = detections[0];
+                    document.getElementById('coordinatesDisplay').innerHTML = `
+                        Object: ${obj.label}
+                        Confidence: ${(obj.confidence * 100).toFixed(1)}%
+                        Position: (${obj.x.toFixed(1)}, ${obj.y.toFixed(1)})
+                        Dimensions: ${obj.width.toFixed(1)}x${obj.height.toFixed(1)}
+                    `;
+                    alert(`Test detection successful! Found ${detections.length} objects`);
+                } else {
+                    alert('No objects detected yet');
+                }
             });
             
             // Simulate WebSocket connection
@@ -639,62 +781,6 @@
                 document.getElementById('coordinatesDisplay').innerHTML = `
                     Connection closed. No data being sent.
                 `;
-            });
-            
-            // Update point size display
-            const pointSizeSlider = document.getElementById('pointSizeSlider');
-            const pointSizeValue = document.getElementById('pointSizeValue');
-            
-            pointSizeSlider.addEventListener('input', function() {
-                pointSizeValue.textContent = this.value;
-            });
-            
-            // Simulate object detection checkboxes
-            setTimeout(() => {
-                const checkboxContainer = document.getElementById('checkboxes-container');
-                checkboxContainer.innerHTML = '';
-                
-                const objects = ['person', 'cup', 'book', 'laptop', 'cell phone', 'bottle', 'chair', 'keyboard'];
-                
-                objects.forEach(obj => {
-                    const label = document.createElement('label');
-                    label.innerHTML = `
-                        <input type="checkbox" value="${obj}">
-                        <span>${obj}</span>
-                    `;
-                    checkboxContainer.appendChild(label);
-                });
-            }, 3000);
-            
-            // Update detection frequency
-            let fps = 0;
-            setInterval(() => {
-                fps = 8 + Math.random() * 2;
-                document.getElementById('detectionFreq').textContent = `${fps.toFixed(1)} FPS`;
-            }, 2000);
-            
-            // Handle button clicks
-            document.getElementById('saveTrajectoryBtn').addEventListener('click', function() {
-                alert('Trajectory saved as trajectory.png');
-            });
-            
-            document.getElementById('clearTrajectoryBtn').addEventListener('click', function() {
-                alert('Trajectory cleared');
-            });
-            
-            document.getElementById('debugBtn').addEventListener('click', function() {
-                const objects = ['person', 'cup', 'book', 'laptop', 'cell phone', 'bottle'];
-                const randomObj = objects[Math.floor(Math.random() * objects.length)];
-                const confidence = (0.8 + Math.random() * 0.2).toFixed(2);
-                
-                document.getElementById('coordinatesDisplay').innerHTML = `
-                    Object: ${randomObj}
-                    Confidence: ${(confidence * 100).toFixed(1)}%
-                    Position: (${(Math.random() * 640).toFixed(1)}, ${(Math.random() * 480).toFixed(1)})
-                    Sent at: ${new Date().toLocaleTimeString()}
-                `;
-                
-                alert(`Test detection run - found ${randomObj} with ${(confidence * 100).toFixed(1)}% confidence`);
             });
         });
     </script>
