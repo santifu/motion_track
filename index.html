@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Real-time Object Tracking - WebSocket</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="https://unpkg.com/ml5@0.6.1/dist/ml5.min.js"></script>
+    <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -174,6 +174,7 @@
         <div class="control-group">
             <button id="saveTrajectoryBtn">Save Trajectory (PNG)</button>
             <button id="clearTrajectoryBtn">Clear Trajectory</button>
+            <button id="debugBtn" style="background-color: #28a745;">🔍 Test Detection</button>
         </div>
     </div>
 
@@ -187,6 +188,8 @@
         let selectedLabels = {};
         let labelCheckboxes = {};
         let checkboxesContainer;
+        let detectionStarted = false;
+        let lastDetectionTime = 0;
 
         // WebSocket variables
         let websocket = null;
@@ -203,7 +206,9 @@
             let canvas = createCanvas(640, 480);
             canvas.parent('p5-canvas-container');
 
-            video = createCapture(VIDEO);
+            // Initialize video capture
+            console.log('Initializing video capture...');
+            video = createCapture(VIDEO, videoReady);
             video.size(640, 480);
             video.hide();
 
@@ -241,8 +246,52 @@
                 console.log('Trajectory cleared.');
             });
 
-            // Load the pre-trained COCO-SSD object detection model
-            objectDetector = ml5.objectDetector('cocossd', modelReady);
+            document.getElementById('debugBtn').addEventListener('click', () => {
+                console.log('🔍 Manual detection test...');
+                console.log('Video state:', video ? 'loaded' : 'not loaded');
+                console.log('Model state:', objectDetector ? 'loaded' : 'not loaded');
+                console.log('Video dimensions:', video ? `${video.width}x${video.height}` : 'N/A');
+                
+                if (objectDetector && video) {
+                    console.log('Running manual detection...');
+                    objectDetector.detect(video, (error, results) => {
+                        if (error) {
+                            console.error('Manual detection error:', error);
+                        } else {
+                            console.log('Manual detection results:', results);
+                            console.log('Number of objects found:', results.length);
+                            results.forEach((obj, i) => {
+                                console.log(`Object ${i}: ${obj.label} (${(obj.confidence * 100).toFixed(1)}%)`);
+                            });
+                        }
+                    });
+                } else {
+                    console.log('❌ Cannot run detection - model or video not ready');
+                }
+            });
+
+            // Initialize ML5 model
+            console.log('Loading ML5 COCO-SSD model...');
+            checkboxesContainer.innerHTML = '<p>Loading AI model, please wait...</p>';
+            
+            // Try to load the model
+            try {
+                objectDetector = ml5.objectDetector('cocossd', modelReady);
+            } catch (error) {
+                console.error('Error loading model:', error);
+                checkboxesContainer.innerHTML = '<p style="color: red;">Error loading AI model. Please refresh the page.</p>';
+            }
+        }
+
+        function videoReady() {
+            console.log('Video is ready!');
+            console.log('Video dimensions:', video.width, 'x', video.height);
+            
+            // Start detection if model is ready
+            if (objectDetector && !detectionStarted) {
+                console.log('Starting detection...');
+                detectObjects();
+            }
         }
 
         function connectWebSocket() {
@@ -343,26 +392,72 @@
         }
 
         function modelReady() {
-            console.log('Model loaded.');
-            checkboxesContainer.innerHTML = '';
-            video.elt.addEventListener('loadeddata', () => {
-                console.log('Video ready. Starting detection...');
+            console.log('✅ ML5 Model loaded successfully!');
+            console.log('Model details:', objectDetector);
+            checkboxesContainer.innerHTML = '<p style="color: green;">✅ AI Model loaded! Point camera at objects...</p>';
+            
+            // Start detection if video is ready
+            if (video && video.loadedmetadata && !detectionStarted) {
+                console.log('Video already ready, starting detection...');
                 detectObjects();
-            });
+            }
         }
 
         function detectObjects() {
-            objectDetector.detect(video, gotResults);
+            if (!objectDetector) {
+                console.log('Model not ready yet...');
+                return;
+            }
+
+            if (!video || !video.loadedmetadata) {
+                console.log('Video not ready yet...');
+                setTimeout(detectObjects, 1000);
+                return;
+            }
+
+            detectionStarted = true;
+            lastDetectionTime = Date.now();
+            
+            console.log('Running object detection...');
+            
+            try {
+                objectDetector.detect(video, gotResults);
+            } catch (error) {
+                console.error('Error during detection:', error);
+                setTimeout(detectObjects, 1000); // Retry after 1 second
+            }
         }
 
         function gotResults(error, results) {
+            const currentTime = Date.now();
+            const timeSinceLastDetection = currentTime - lastDetectionTime;
+            
             if (error) {
-                console.error(error);
+                console.error('Detection error:', error);
+                setTimeout(detectObjects, 1000);
                 return;
             }
+            
+            // Debug: Log detection results
+            console.log(`🔍 Detection completed in ${timeSinceLastDetection}ms`);
+            console.log(`📊 Detections found: ${results.length}`);
+            
+            if (results.length > 0) {
+                console.log('🎯 Objects detected:', results.map(r => `${r.label} (${(r.confidence * 100).toFixed(1)}%)`));
+                
+                // Update UI to show successful detection
+                if (checkboxesContainer.innerHTML.includes('Point camera at objects')) {
+                    checkboxesContainer.innerHTML = '<p style="color: blue;">🎯 Objects detected! Select items to track:</p>';
+                }
+            } else {
+                console.log('👁️ No objects detected in current frame');
+            }
+            
             detections = results;
             updateLabelCheckboxes(detections);
-            detectObjects();
+            
+            // Continue detection loop
+            setTimeout(detectObjects, 100); // Detect every 100ms
         }
 
         function updateLabelCheckboxes(currentDetections) {
