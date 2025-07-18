@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time Object Tracking - WebSocket</title>
+    <title>Real-time Object Tracking - Camera Fixed</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
+    <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
@@ -68,6 +68,7 @@
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
             padding: 15px;
+            position: relative;
         }
         
         .section-title {
@@ -89,6 +90,16 @@
             overflow: hidden;
             background-color: #000;
             margin-bottom: 15px;
+            min-height: 480px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .camera-placeholder {
+            color: #7f8c8d;
+            text-align: center;
+            padding: 20px;
         }
         
         .controls {
@@ -303,6 +314,18 @@
             color: #7f8c8d;
             font-size: 0.9rem;
         }
+        
+        .camera-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        #cameraFeed {
+            width: 100%;
+            border-radius: 6px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -318,7 +341,18 @@
                     <i class="fas fa-video"></i>
                     <h2>Camera Feed & Tracking</h2>
                 </div>
-                <div id="p5-canvas-container"></div>
+                <div id="p5-canvas-container">
+                    <div class="camera-placeholder">
+                        <i class="fas fa-camera fa-3x" style="margin-bottom: 15px;"></i>
+                        <p>Camera feed will appear here</p>
+                        <p class="camera-status">Initializing camera...</p>
+                        <div class="camera-controls">
+                            <button id="startCamera">
+                                <i class="fas fa-play"></i> Start Camera
+                            </button>
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="control-group">
                     <h3><i class="fas fa-sliders-h"></i> Visualization Settings</h3>
@@ -438,10 +472,140 @@
     </div>
 
     <script>
-        // ML5 and P5.js implementation would go here
-        // This is a simulation for demonstration purposes
+        // ML5 and P5.js implementation
+        let video;
+        let canvas;
+        let objectDetector;
+        let detections = [];
+        let isCameraActive = false;
+        let isModelLoaded = false;
         
+        // Camera initialization
+        function setupCamera() {
+            const constraints = {
+                video: {
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                    facingMode: "user"
+                },
+                audio: false
+            };
+            
+            // Check if browser supports getUserMedia
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                document.querySelector('.camera-status').textContent = "Camera API not supported in this browser";
+                return;
+            }
+            
+            // Access the camera
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(function(stream) {
+                    document.querySelector('.camera-placeholder').style.display = 'none';
+                    document.getElementById('cameraStatus').textContent = 'Active';
+                    
+                    // Create p5 canvas
+                    canvas = createCanvas(640, 480);
+                    canvas.parent('p5-canvas-container');
+                    
+                    // Create video capture
+                    video = createCapture(VIDEO);
+                    video.size(640, 480);
+                    video.hide();
+                    
+                    // Flip video horizontally for mirror effect
+                    video.loadedmetadata = function() {
+                        push();
+                        translate(width, 0);
+                        scale(-1, 1);
+                        image(video, 0, 0, width, height);
+                        pop();
+                    };
+                    
+                    isCameraActive = true;
+                    initObjectDetection();
+                })
+                .catch(function(err) {
+                    console.error("Camera error: ", err);
+                    document.querySelector('.camera-status').textContent = "Camera access denied: " + err.message;
+                    document.getElementById('cameraStatus').textContent = 'Error: ' + err.message;
+                });
+        }
+        
+        // Initialize object detection
+        function initObjectDetection() {
+            if (!isCameraActive) return;
+            
+            // Initialize ML5 object detection
+            objectDetector = ml5.objectDetector('cocossd', modelReady);
+        }
+        
+        // When model is ready
+        function modelReady() {
+            console.log('Model loaded!');
+            isModelLoaded = true;
+            document.getElementById('modelStatus').textContent = 'COCO-SSD Model Loaded';
+            
+            // Start detection
+            detect();
+        }
+        
+        // Detection function
+        function detect() {
+            if (!isCameraActive || !isModelLoaded) return;
+            
+            objectDetector.detect(video, gotResults);
+        }
+        
+        // Results callback
+        function gotResults(error, results) {
+            if (error) {
+                console.error(error);
+                return;
+            }
+            
+            detections = results;
+            
+            // Schedule next detection
+            setTimeout(detect, 100);
+        }
+        
+        // Draw function
+        function draw() {
+            if (!isCameraActive) return;
+            
+            // Draw video feed (mirrored)
+            push();
+            translate(width, 0);
+            scale(-1, 1);
+            image(video, 0, 0, width, height);
+            pop();
+            
+            // Draw detections
+            for (let i = 0; i < detections.length; i++) {
+                let object = detections[i];
+                let flippedX = width - object.x - object.width;
+                
+                stroke(0, 255, 0);
+                strokeWeight(2);
+                noFill();
+                rect(flippedX, object.y, object.width, object.height);
+                
+                noStroke();
+                fill(255);
+                textSize(16);
+                text(object.label + ' ' + nfc(object.confidence * 100, 1) + '%', flippedX + 5, object.y + 20);
+            }
+        }
+        
+        // DOM Content Loaded
         document.addEventListener('DOMContentLoaded', function() {
+            // Camera start button
+            document.getElementById('startCamera').addEventListener('click', function() {
+                setupCamera();
+                this.disabled = true;
+                this.innerHTML = '<i class="fas fa-sync-alt"></i> Restart Camera';
+            });
+            
             // Simulate WebSocket connection
             const connectBtn = document.getElementById('connectBtn');
             const disconnectBtn = document.getElementById('disconnectBtn');
@@ -500,9 +664,6 @@
                     `;
                     checkboxContainer.appendChild(label);
                 });
-                
-                document.getElementById('modelStatus').textContent = 'COCO-SSD Model Loaded';
-                document.getElementById('cameraStatus').textContent = 'Active (640x480)';
             }, 3000);
             
             // Update detection frequency
